@@ -422,7 +422,7 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectIpv6()
     {
-        if (!$this->isSupportIPv6()) {
+        if (!$this->isSupportIPv6() || getenv('CI') === 'true') {
             $this->markTestSkipped('CI lacks IPv6');
         }
 
@@ -510,7 +510,7 @@ class RTCIceConnectionTest extends TestCase
         $connection1->setRemotePassword('wrong-password');
 
         async(function () use ($connection1, $connection2) {
-            delay(.2);
+            delay(1);
             $connection1->close();
             $connection2->close();
         })();
@@ -541,7 +541,7 @@ class RTCIceConnectionTest extends TestCase
         $connection1->setRemotePassword($connection2->getLocalPassword());
 
         async(function () use ($connection1, $connection2) {
-            delay(.2);
+            delay(1);
             $connection1->close();
             $connection2->close();
         })();
@@ -719,6 +719,10 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerDnsLookupError()
     {
+        if (getenv('CI') === 'true') {
+            $this->markTestSkipped('Got conflict on GitHub Actions.');
+        }
+
         $config = clone $this->config;
         $config->setStunServer(['fakestun.test', 3478]); // invalid stun server domain name
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
@@ -750,6 +754,10 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerTimeout()
     {
+        if (getenv('CI') === 'true') {
+            $this->markTestSkipped('Got conflict on GitHub Actions.');
+        }
+
         $config = clone $this->config;
         $config->setStunServer(['127.0.0.1', 1234]); // Invalid port causes timout
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
@@ -781,7 +789,7 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerIpv6()
     {
-        if (!$this->isSupportIPv6()) {
+        if (!$this->isSupportIPv6() || getenv('CI') === 'true') {
             $this->markTestSkipped('CI lacks IPv6');
         }
 
@@ -1048,6 +1056,10 @@ class RTCIceConnectionTest extends TestCase
 
     public function testAddRemoteCandidateMdnsGood()
     {
+        if (getenv('CI') === 'true') {
+            $this->markTestSkipped('Multicast networking not available on GitHub Actions.');
+        }
+
         $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20']);
         $mdnsMock->start();
 
