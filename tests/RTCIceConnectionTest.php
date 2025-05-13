@@ -410,7 +410,7 @@ class RTCIceConnectionTest extends TestCase
         $this->inviteAccept($connection1, $connection2);
 
         async(function () use ($connection1, $connection2) {
-            delay(.3);
+            delay(1);
             $connection1->close();
             $connection2->close();
         })();
@@ -720,7 +720,7 @@ class RTCIceConnectionTest extends TestCase
     public function testConnectWithStunServerDnsLookupError()
     {
         $config = clone $this->config;
-        $config->setStunServer(['fakestun.dev', 3478]); // invalid stun server domain name
+        $config->setStunServer(['fakestun.test', 3478]); // invalid stun server domain name
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
         $connection2 = $this->getIceConnection(false);
 
