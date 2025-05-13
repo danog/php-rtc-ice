@@ -1,0 +1,59 @@
+name: ICE TESTS
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.4
+          tools: composer:v2
+
+      - name: Validate composer.json and composer.lock
+        run: composer validate --strict
+
+      - name: Cache Composer packages
+        id: composer-cache
+        uses: actions/cache@v3
+        with:
+          path: vendor
+          key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-php-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Install coturn and setup TURN config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coturn
+          sudo mkdir -p /etc/turnserver
+          sudo cp tests/turnconfig/turnserver.conf /etc/turnserver/turnserver.conf
+          sudo cp tests/turnconfig/turnserver.crt /etc/turnserver/turnserver.crt
+          sudo cp tests/turnconfig/turnserver.key /etc/turnserver/turnserver.key
+
+      - name: Start coturn
+        run: |
+          sudo turnserver -c /etc/turnserver/turnserver.conf --daemon
+
+      - name: Check PHP version and extensions
+        run: |
+          php -v
+          php -m | grep -i gmp
+
+      - name: Run PHPUnit tests
+        run: vendor/bin/phpunit
