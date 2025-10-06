@@ -179,6 +179,8 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var int Count of failed binding attempts */
     private int $tryFailedCount = 0;
 
+    private ?array $icePortRange = null;
+
     /**
      * Constructor - Creates a new ICE connection
      *
@@ -584,7 +586,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function getStun(string $address): StunInterface|false
     {
         try {
-            return Stun::create($this, $address, $this->logger);
+            return Stun::create($this, $address, $this->logger, $this->icePortRange);
         } catch (Throwable) {
             return false;
         }
@@ -2057,5 +2059,10 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
     {
         $this->iceRole = $iceRole;
+    }
+
+    public function setIcePortRange(?array $icePortRange): void
+    {
+        $this->icePortRange = $icePortRange;
     }
 }

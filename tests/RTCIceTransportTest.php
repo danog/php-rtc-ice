@@ -107,10 +107,10 @@ class RTCIceTransportTest extends TestCase
 
     public function testConnect()
     {
-        $gatherer1 = new RTCIceGatherer([],IceRole::Controlling);
+        $gatherer1 = new RTCIceGatherer([], role: IceRole::Controlling);
         $transport1 = new RTCIceTransport($gatherer1);
 
-        $gatherer2 = new RTCIceGatherer([], IceRole::Controlled);
+        $gatherer2 = new RTCIceGatherer([], role: IceRole::Controlled);
         $transport2 = new RTCIceTransport($gatherer2);
 
         $gatherer1->gather();
@@ -140,10 +140,10 @@ class RTCIceTransportTest extends TestCase
 
     public function testConnectFail()
     {
-        $gatherer1 = new RTCIceGatherer([],IceRole::Controlling);
+        $gatherer1 = new RTCIceGatherer([], role: IceRole::Controlling);
         $transport1 = new RTCIceTransport($gatherer1);
 
-        $gatherer2 = new RTCIceGatherer([], IceRole::Controlled);
+        $gatherer2 = new RTCIceGatherer([], role: IceRole::Controlled);
         $transport2 = new RTCIceTransport($gatherer2);
 
         $gatherer1->gather();
@@ -173,10 +173,10 @@ class RTCIceTransportTest extends TestCase
 
     public function testConnectThenConsentExpires()
     {
-        $gatherer1 = new RTCIceGatherer([],IceRole::Controlling);
+        $gatherer1 = new RTCIceGatherer([], role: IceRole::Controlling);
         $transport1 = new RTCIceTransport($gatherer1);
 
-        $gatherer2 = new RTCIceGatherer([], IceRole::Controlled);
+        $gatherer2 = new RTCIceGatherer([], role: IceRole::Controlled);
         $transport2 = new RTCIceTransport($gatherer2);
 
         $gatherer1->gather();

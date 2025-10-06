@@ -17,6 +17,7 @@ use Random\RandomException;
 use Throwable;
 use Webrtc\ICE\Enum\IceGatheringState;
 use Webrtc\ICE\Enum\IceRole;
+use Webrtc\ICE\Enum\TransportPolicyType;
 
 /**
  * The RTCIceGatherer is responsible for gathering ICE candidates on the local machine.
@@ -44,13 +45,24 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      *
      * @throws RandomException
      */
-    public function __construct(private readonly array $iceServes, IceRole $role = IceRole::Controlling, ?LoggerInterface $logger = null)
+    public function __construct(
+        private readonly array $iceServes,
+        ?array $icePortRange = null,
+        ?TransportPolicyType $transportPolicy = null,
+        IceRole $role = IceRole::Controlling,
+        ?LoggerInterface $logger = null
+    )
     {
         $protocolParser = new IceProtocolParser($iceServes);
         $this->iceConnection = new RTCIceConnection($protocolParser->getIceConnectionConfiguration(), $role);
+        $this->iceConnection->setIcePortRange($icePortRange);
 
         if ($logger) {
             $this->iceConnection->setLogger($logger);
+        }
+
+        if ($transportPolicy) {
+            $this->iceConnection->setTransportPolicy($transportPolicy);
         }
     }
 
@@ -70,10 +82,10 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      * Changes state from 'new' to 'gathering', then to 'complete' after gathering is finished.
      * Emits a 'statechange' event on state transitions.
      *
-     * @throws RandomException
+     * @return void
      * @throws Throwable
      *
-     * @return void
+     * @throws RandomException
      */
     public function gather(): void
     {
