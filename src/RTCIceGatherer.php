@@ -16,8 +16,6 @@ use Psr\Log\LoggerInterface;
 use Random\RandomException;
 use Throwable;
 use Webrtc\ICE\Enum\IceGatheringState;
-use Webrtc\ICE\Enum\IceRole;
-use Webrtc\ICE\Enum\TransportPolicyType;
 
 /**
  * The RTCIceGatherer is responsible for gathering ICE candidates on the local machine.
@@ -40,29 +38,27 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      * Initializes ICE connection with the given ICE servers and role. Optionally accepts a logger.
      *
      * @param array $iceServes List of ICE server configurations.
-     * @param IceRole $role The ICE role (Controlling or Controlled).
+     * @param ?RTCICESetting $setting The ICE settings.
      * @param LoggerInterface|null $logger Optional logger for debugging.
      *
      * @throws RandomException
      */
-    public function __construct(
-        private readonly array $iceServes,
-        ?array $icePortRange = null,
-        ?TransportPolicyType $transportPolicy = null,
-        IceRole $role = IceRole::Controlling,
-        ?LoggerInterface $logger = null
-    )
+    public function __construct(private array $iceServes, ?RTCICESetting $setting = null, ?LoggerInterface $logger = null)
     {
         $protocolParser = new IceProtocolParser($iceServes);
-        $this->iceConnection = new RTCIceConnection($protocolParser->getIceConnectionConfiguration(), $role);
-        $this->iceConnection->setIcePortRange($icePortRange);
+
+        if (!$setting) {
+            $setting = new RTCICESetting();
+        }
+
+        $this->iceConnection = new RTCIceConnection($protocolParser->getIceConnectionConfiguration(), $setting->getIceRole());
+        $this->iceConnection->setIcePortRange($setting->getIcePortRange());
+        $this->iceConnection->setTransportPolicy($setting->getTransportPolicy());
+        $this->iceConnection->setRemoteIsLite($setting->isIceLite());
+        $this->iceConnection->setNat1to1($setting->getNat1to1());
 
         if ($logger) {
             $this->iceConnection->setLogger($logger);
-        }
-
-        if ($transportPolicy) {
-            $this->iceConnection->setTransportPolicy($transportPolicy);
         }
     }
 

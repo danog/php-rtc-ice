@@ -410,7 +410,7 @@ class RTCIceConnectionTest extends TestCase
         $this->inviteAccept($connection1, $connection2);
 
         async(function () use ($connection1, $connection2) {
-            delay(1);
+            delay(5);
             $connection1->close();
             $connection2->close();
         })();

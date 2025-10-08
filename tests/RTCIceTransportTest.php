@@ -1,6 +1,5 @@
 <?php
 
-namespace Tests\Webrtc\ICE;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -20,6 +19,7 @@ use Webrtc\ICE\RTCIceConnection;
 use Webrtc\ICE\RTCIceGatherer;
 use Webrtc\ICE\RTCIceParameters;
 use Webrtc\ICE\RTCIceProtocolConfiguration;
+use Webrtc\ICE\RTCICESetting;
 use Webrtc\ICE\RTCIceTransport;
 use Webrtc\ICE\Trait\Mdns;
 use Webrtc\ICE\Trait\NetworkAdapter;
@@ -107,10 +107,14 @@ class RTCIceTransportTest extends TestCase
 
     public function testConnect()
     {
-        $gatherer1 = new RTCIceGatherer([], role: IceRole::Controlling);
+        $iceSetting1 = new RTCICESetting;
+        $iceSetting1->setIceRole(IceRole::Controlling);
+        $gatherer1 = new RTCIceGatherer([], $iceSetting1);
         $transport1 = new RTCIceTransport($gatherer1);
 
-        $gatherer2 = new RTCIceGatherer([], role: IceRole::Controlled);
+        $iceSetting2 = new RTCICESetting;
+        $iceSetting2->setIceRole(IceRole::Controlled);
+        $gatherer2 = new RTCIceGatherer([], $iceSetting2);
         $transport2 = new RTCIceTransport($gatherer2);
 
         $gatherer1->gather();
@@ -140,10 +144,14 @@ class RTCIceTransportTest extends TestCase
 
     public function testConnectFail()
     {
-        $gatherer1 = new RTCIceGatherer([], role: IceRole::Controlling);
+        $iceSetting1 = new RTCICESetting;
+        $iceSetting1->setIceRole(IceRole::Controlling);
+        $gatherer1 = new RTCIceGatherer([], $iceSetting1);
         $transport1 = new RTCIceTransport($gatherer1);
 
-        $gatherer2 = new RTCIceGatherer([], role: IceRole::Controlled);
+        $iceSetting2 = new RTCICESetting;
+        $iceSetting2->setIceRole(IceRole::Controlled);
+        $gatherer2 = new RTCIceGatherer([], $iceSetting2);
         $transport2 = new RTCIceTransport($gatherer2);
 
         $gatherer1->gather();
@@ -173,10 +181,14 @@ class RTCIceTransportTest extends TestCase
 
     public function testConnectThenConsentExpires()
     {
-        $gatherer1 = new RTCIceGatherer([], role: IceRole::Controlling);
+        $iceSetting1 = new RTCICESetting;
+        $iceSetting1->setIceRole(IceRole::Controlling);
+        $gatherer1 = new RTCIceGatherer([], $iceSetting1);
         $transport1 = new RTCIceTransport($gatherer1);
 
-        $gatherer2 = new RTCIceGatherer([], role: IceRole::Controlled);
+        $iceSetting2 = new RTCICESetting;
+        $iceSetting2->setIceRole(IceRole::Controlled);
+        $gatherer2 = new RTCIceGatherer([], $iceSetting2);
         $transport2 = new RTCIceTransport($gatherer2);
 
         $gatherer1->gather();

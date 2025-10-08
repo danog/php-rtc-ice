@@ -71,8 +71,6 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 {
     use NetworkAdapter, Mdns, DNS;
 
-    use NetworkAdapter, Mdns, DNS;
-
     /* Constants */
 
     /** @var int Maximum number of binding retry attempts */
@@ -179,15 +177,14 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var int Count of failed binding attempts */
     private int $tryFailedCount = 0;
 
+    /** @var ?array Range of ports that host candidates allow */
     private ?array $icePortRange = null;
 
     /**
-     * Constructor - Creates a new ICE connection
-     *
-     * @param RTCIceProtocolConfigurationInterface $configuration ICE protocol configuration
-     * @param IceRole $iceRole The role of this ICE agent
-     * @throws RandomException If random number generation fails
+     * @var ?array If set, this will result in all host candidates (which normally have a private IP address)
+     * to be rewritten with the public address provided in the settings
      */
+    private ?array $nat1to1 = null;
 
     /**
      * Constructor - Creates a new ICE connection
@@ -454,7 +451,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function getHostCandidates(int $componentId): array
     {
-        $addresses = $this->getHostAddresses($this->useIPv4, $this->useIPv6);
+        $addresses = $this->nat1to1 ?? $this->getHostAddresses($this->useIPv4, $this->useIPv6);
         $candidates = [];
 
         foreach ($addresses as $address) {
@@ -2064,5 +2061,15 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     public function setIcePortRange(?array $icePortRange): void
     {
         $this->icePortRange = $icePortRange;
+    }
+
+    public function getNat1to1(): ?array
+    {
+        return $this->nat1to1;
+    }
+
+    public function setNat1to1(?array $nat1to1): void
+    {
+        $this->nat1to1 = $nat1to1;
     }
 }

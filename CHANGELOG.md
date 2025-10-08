@@ -9,3 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - First release
+
+
+## [1.0.3] - 2025-10-08
+
+### Added
+- Add ICESetting class that represent low level ice setting
