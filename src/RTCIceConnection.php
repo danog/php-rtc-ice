@@ -2058,16 +2058,23 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->iceRole = $iceRole;
     }
 
+    /**
+     * Sets the ICE port range used for candidate gathering.
+     *
+     * @param array|null $icePortRange
+     * @return void
+     */
     public function setIcePortRange(?array $icePortRange): void
     {
         $this->icePortRange = $icePortRange;
     }
 
-    public function getNat1to1(): ?array
-    {
-        return $this->nat1to1;
-    }
-
+    /**
+     * Sets the 1:1 NAT mapping configuration.
+     *
+     * @param array<string,string>|null $nat1to1 Array of ['privateIp' => 'publicIp'] or null
+     * @return void
+     */
     public function setNat1to1(?array $nat1to1): void
     {
         $this->nat1to1 = $nat1to1;
