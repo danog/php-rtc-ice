@@ -67,9 +67,8 @@ class Utils
         $high = random_int(0, 0x7FFFFFFF);
         $low = random_int(0, 0xFFFFFFFF);
 
-        $random64BitInt = ($high << 32) | $low;
-
-        return gmp_strval(gmp_init($random64BitInt, 10));
+        // $high is capped to 31 bits, so the result always fits in a signed 64-bit integer.
+        return (string) (($high << 32) | $low);
     }
 
     /**

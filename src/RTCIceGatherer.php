@@ -56,8 +56,6 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
         $this->iceConnection->setTransportPolicy($setting->getTransportPolicy());
         $this->iceConnection->setRemoteIsLite($setting->isIceLite());
         $this->iceConnection->setNat1to1($setting->getNat1to1());
-        $this->iceConnection->setUseIPv4($setting->isUseIPv4());
-        $this->iceConnection->setUseIPv6($setting->isUseIPv6());
 
         if ($logger) {
             $this->iceConnection->setLogger($logger);
