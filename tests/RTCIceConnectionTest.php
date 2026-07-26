@@ -28,6 +28,7 @@ use Webrtc\STUN\Enum\MessageAttribute;
 use Webrtc\STUN\Enum\MessageClass;
 use Webrtc\STUN\Enum\MessageMethod;
 use Webrtc\STUN\Exception\TransactionException;
+use Webrtc\STUN\Exception\TransactionExceptionInterface;
 use Webrtc\STUN\Exception\TransactionFailedException;
 use Webrtc\STUN\Exception\TransactionTimeoutException;
 use Webrtc\STUN\IceConnectionProtocolInterface;
@@ -658,11 +659,6 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectTimeout()
     {
-        // Hangs before connect() is even entered, so the mocked check path is not the cause;
-        // tracing it needs output that survives a test which never finishes, since PHPUnit
-        // buffers a hanging test's stderr. Every other negotiation path is covered above.
-        $this->markTestSkipped('Hangs during setup on the amphp port; see task list.');
-
         $connection = $this->getMockBuilder(RTCIceConnection::class)
             ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['startCheckBinding'])
