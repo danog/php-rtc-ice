@@ -74,13 +74,13 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /* Constants */
 
     /** @var int Maximum number of binding retry attempts */
-    private const int RETRY_BINDING_MAX = 10;
+    private const RETRY_BINDING_MAX = 10;
 
     /** @var int Maximum number of consent failures before closing */
-    private const int CONSENT_FAILURES = 6;
+    private const CONSENT_FAILURES = 6;
 
     /** @var int Interval between consent checks in seconds */
-    private const int CONSENT_INTERVAL = 5;
+    private const CONSENT_INTERVAL = 5;
 
     /* Properties */
 

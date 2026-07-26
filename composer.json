@@ -25,12 +25,13 @@
         }
     ],
     "require": {
-        "php": "^8.4",
+        "php": "^8.2",
         "quasarstream/exception": "^1.0",
         "quasarstream/turn": "^1.0",
         "quasarstream/stun": "^1.0",
         "quasarstream/mdns": "^1.0",
-        "psr/log": "^3.0"
+        "psr/log": "^3.0",
+        "symfony/polyfill-php84": "^1.32"
     },
     "require-dev": {
         "mockery/mockery": "^1.6",

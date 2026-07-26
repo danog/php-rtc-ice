@@ -1289,10 +1289,15 @@ class RTCIceConnectionTest extends TestCase
 
     private function isSupportIPv6(): bool
     {
-        $socket = @socket_create(AF_INET6, SOCK_STREAM, SOL_TCP);
-        @socket_close($socket);
+        $socket = @stream_socket_server("tcp://[::1]:0", $errno, $errstr);
 
-        return boolval($socket);
+        if ($socket === false) {
+            return false;
+        }
+
+        fclose($socket);
+
+        return true;
     }
 
     private function asyncConnect(RTCIceConnection $connection1, RTCIceConnection $connection2): void
