@@ -430,8 +430,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectIpv6()
     {
-        if (!$this->isSupportIPv6() || getenv('CI') === 'true') {
-            $this->markTestSkipped('CI lacks IPv6');
+        if (!$this->isSupportIPv6()) {
+            $this->markTestSkipped('This host has no usable IPv6.');
         }
 
         $connection1 = $this->getIceConnection();
@@ -734,8 +734,10 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerDnsLookupError()
     {
-        if (getenv('CI') === 'true') {
-            $this->markTestSkipped('Got conflict on GitHub Actions.');
+        // RFC 2606 reserves .test so that it never resolves, but a resolver that answers
+        // wildcards would hand back an address and there would be no lookup failure to see.
+        if (gethostbyname('fakestun.test') !== 'fakestun.test') {
+            $this->markTestSkipped('This resolver answers for names that should not exist.');
         }
 
         $config = clone $this->config;
@@ -769,8 +771,10 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerTimeout()
     {
-        if (getenv('CI') === 'true') {
-            $this->markTestSkipped('Got conflict on GitHub Actions.');
+        // The point is that nothing answers, so a STUN server that happens to be listening
+        // on this port would make the request succeed rather than time out.
+        if (self::portIsOccupied(1234)) {
+            $this->markTestSkipped('Something is listening on 127.0.0.1:1234.');
         }
 
         $config = clone $this->config;
@@ -804,8 +808,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerIpv6()
     {
-        if (!$this->isSupportIPv6() || getenv('CI') === 'true') {
-            $this->markTestSkipped('CI lacks IPv6');
+        if (!$this->isSupportIPv6()) {
+            $this->markTestSkipped('This host has no usable IPv6.');
         }
 
         $config = clone $this->config;
@@ -1272,6 +1276,22 @@ class RTCIceConnectionTest extends TestCase
         delay(.01);
 
         $this->assertEquals(RTCIceCandidatePairStats::FAILED, $pair->getState());
+    }
+
+    /**
+     * Whether anything holds a UDP port on loopback.
+     */
+    private static function portIsOccupied(int $port): bool
+    {
+        $socket = @stream_socket_server("udp://127.0.0.1:$port", $errno, $errstr, STREAM_SERVER_BIND);
+
+        if ($socket === false) {
+            return true;
+        }
+
+        fclose($socket);
+
+        return false;
     }
 
     private function assertCandidateTypes(RTCIceConnection $conn, array $expected): void
