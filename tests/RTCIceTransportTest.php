@@ -242,7 +242,7 @@ class RTCIceTransportTest extends TestCase
             async(function () use ($connection) {
                 delay(.5);
                 $connection->close();
-            })();
+            })->ignore();
 
             $deferred = new Deferred();
             $deferred->resolve(true);

@@ -1125,7 +1125,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
                 $this->logger?->info("Check $pair failed: could not nominate pair");
                 $this->markPairFailed($pair);
             }
-        });
+        })->ignore();
     }
 
     /**
@@ -1176,11 +1176,15 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
                 [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
                 $this->handleCheckBinding($address, $pair, $nominate);
             } catch (TransactionExceptionInterface $e) {
-                // Only a transaction failure says anything about this pair; anything else is a
-                // bug and must not be quietly recorded as the pair being unreachable.
                 $this->handleBindingError($e, $pair, $message);
+            } catch (Throwable $e) {
+                // Anything else is a bug rather than a statement about this pair, but the
+                // check list is driven by pairs reaching a terminal state: letting the fiber
+                // die here would leave isBindingWait set and stall the whole exchange.
+                $this->logger?->error("Check $pair aborted: {$e->getMessage()}");
+                $this->markPairFailed($pair);
             }
-        });
+        })->ignore();
     }
 
     /**
@@ -1308,7 +1312,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
                     $this->periodicCheck = null;
                     $deferred->error(new RuntimeException("Binding check failed"));
                 }
-            });
+            })->ignore();
         });
 
         $deferred->getFuture()->await();
@@ -1565,7 +1569,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
                             $this->close();
                         }
                     }
-                });
+                })->ignore();
             }
         });
     }
@@ -1845,7 +1849,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             } catch (TransactionExceptionInterface $e) {
                 $this->logger?->error("Failed to send binding response", ["Error" => $e->getMessage()]);
             }
-        })();
+        })->ignore();
     }
 
     /**
