@@ -4,7 +4,6 @@
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use PHPUnit\Framework\TestCase;
-use Amp\DeferredFuture;
 use Webrtc\DTLS\RTCDtlsTransport;
 use Webrtc\DTLS\TLS\Handshake;
 use Webrtc\Exception\InvalidArgumentException;
@@ -244,10 +243,7 @@ class RTCIceTransportTest extends TestCase
                 $connection->close();
             })->ignore();
 
-            $deferred = new Deferred();
-            $deferred->resolve(true);
-
-            return $deferred->promise();
+            // connect() returns nothing now: it simply comes back once negotiation is done.
         };
         $connection->method('connect')->willReturnCallback($connectMock);
 

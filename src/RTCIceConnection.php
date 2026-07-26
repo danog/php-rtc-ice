@@ -1332,12 +1332,24 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return false;
         }
 
+        // Nothing was started, so no check is outstanding. The flag means "a check is in
+        // flight" and is otherwise only cleared when a pair reaches a terminal state, so
+        // leaving it set here makes every later tick return early and the exchange stalls.
+        $this->isBindingWait = false;
+
         if (empty($this->checkList)) {
             $this->tryFailedCount = self::RETRY_BINDING_MAX + 1;
             return false;
         }
 
-        $this->tryFailedCount = self::RETRY_BINDING_MAX;
+        // Nothing is waiting or frozen, so no pair will fail again and push this count any
+        // higher. If no further remote candidates can arrive either, no new pair will ever
+        // appear, and leaving the count *at* the ceiling rather than past it makes the
+        // periodic check spin forever on a list that can no longer change.
+        $this->tryFailedCount = $this->remoteCandidatesEnd
+            ? self::RETRY_BINDING_MAX + 1
+            : self::RETRY_BINDING_MAX;
+
         return $this->remoteCandidatesEnd && $this->checkListDone;
     }
 
