@@ -13,7 +13,6 @@ namespace Webrtc\ICE;
 
 use Evenement\EventEmitter;
 use Psr\Log\LoggerInterface;
-use React\Promise\PromiseInterface;
 use Throwable;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\IceRole;
@@ -117,10 +116,10 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      * Start the ICE transport with the given remote ICE parameters.
      *
      * @param RTCIceParameters $remoteIceParameters
-     * @return PromiseInterface
+     * @return void Returns once the transport has finished checking.
      * @throws InvalidArgumentException If the transport is already closed.
      */
-    public function start(RTCIceParameters $remoteIceParameters): PromiseInterface
+    public function start(RTCIceParameters $remoteIceParameters): void
     {
         if ($this->state === IceTransportState::closed) {
             throw new InvalidArgumentException("RTCIceTransport is closed");
@@ -132,9 +131,12 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
         $this->iceConnection->setRemoteUsername($remoteIceParameters->usernameFragment);
         $this->iceConnection->setRemotePassword($remoteIceParameters->password);
 
-        return $this->iceConnection->connect()
-            ->then(fn() => $this->setState(IceTransportState::complete))
-            ->catch(fn() => $this->setState(IceTransportState::failed));
+        try {
+            $this->iceConnection->connect();
+            $this->setState(IceTransportState::complete);
+        } catch (Throwable) {
+            $this->setState(IceTransportState::failed);
+        }
     }
 
     /**

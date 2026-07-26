@@ -14,7 +14,6 @@ namespace Webrtc\ICE\Trait;
 use RuntimeException;
 use Throwable;
 use Webrtc\MDNS\Factory;
-use function React\Async\await;
 
 /**
  * mDNS (Multicast DNS) Resolution Trait
@@ -56,7 +55,7 @@ trait Mdns
 
         try {
             // IP successfully resolved
-            return await($resolver->resolve($domain));
+            return $resolver->resolve($domain);
         } catch (Throwable $e) {
             $this?->logger?->error(sprintf("Could not resolve the domain: %s. %s", $domain, $e->getMessage()));
             return false;

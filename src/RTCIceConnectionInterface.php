@@ -11,7 +11,6 @@
 
 namespace Webrtc\ICE;
 
-use React\Promise\PromiseInterface;
 use Throwable;
 use Webrtc\ICE\Enum\IceRole;
 use Webrtc\STUN\IceConnectionProtocolInterface;
@@ -66,7 +65,7 @@ interface RTCIceConnectionInterface
 
     public function endOfRemoteCandidate(): void;
 
-    public function connect(): PromiseInterface;
+    public function connect(): void;
 
     public function unfreezeChecks(): void;
 

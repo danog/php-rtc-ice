@@ -11,10 +11,8 @@
 
 namespace Webrtc\ICE\Trait;
 
-use React\Dns\Config\Config;
-use React\Dns\Resolver\Factory;
 use Throwable;
-use function React\Async\await;
+use function Amp\Dns\resolve;
 
 /**
  * DNS Resolution Trait
@@ -64,16 +62,10 @@ trait DNS
             return $address;
         }
 
-        $config = Config::loadSystemConfigBlocking();
-        if (!$config->nameservers) {
-            $config->nameservers[] = '8.8.8.8';
-        }
+        // The system resolver already caches and falls back, so there is nothing to configure
+        // here; the first A or AAAA record is what the candidate needs.
+        $records = resolve($address[0]);
 
-        $factory = new Factory();
-        $dns = $factory->createCached($config);
-
-        $ipAddresses = await($dns->resolve($address[0]));
-
-        return [$ipAddresses, $address[1]];
+        return [$records[0]->getValue(), $address[1]];
     }
 }

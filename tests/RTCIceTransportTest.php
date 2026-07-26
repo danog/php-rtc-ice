@@ -4,7 +4,7 @@
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use PHPUnit\Framework\TestCase;
-use React\Promise\Deferred;
+use Amp\DeferredFuture;
 use Webrtc\DTLS\RTCDtlsTransport;
 use Webrtc\DTLS\TLS\Handshake;
 use Webrtc\Exception\InvalidArgumentException;
@@ -42,10 +42,8 @@ use Webrtc\STUN\Stun;
 use Webrtc\STUN\Transaction;
 use Webrtc\TURN\TurnTcpConnection;
 use Webrtc\Webrtc\RTCPeerConnection;
-use function React\Async\async;
-use function React\Async\await;
-use function React\Async\delay;
-use function React\Async\parallel;
+use function Amp\async;
+use function Amp\delay;
 
 #[UsesClass(IceProtocolParser::class)]
 #[UsesClass(RTCIceCandidate::class)]
@@ -168,7 +166,7 @@ class RTCIceTransportTest extends TestCase
         $this->assertEquals(IceTransportState::new, $transport2->getState());
 
         $transport2->stop();
-        await($transport1->start($gatherer2->getLocalParameters()));
+        $transport1->start($gatherer2->getLocalParameters());
 
         $this->assertEquals(IceTransportState::failed, $transport1->getState());
         $this->assertEquals(IceTransportState::closed, $transport2->getState());
@@ -270,6 +268,14 @@ class RTCIceTransportTest extends TestCase
 
     private function asyncConnect(RTCIceTransport $transport1, RTCIceTransport $transport2, RTCIceGatherer $gatherer1, RTCIceGatherer $gatherer2): void
     {
-        await(parallel([fn() => $transport1->start($gatherer2->getLocalParameters()), fn() => $transport2->start($gatherer1->getLocalParameters())]));
+        // Both transports have to be checking at the same time, so each start() runs in its
+        // own fiber and the test waits for both.
+        $futures = [
+            async(fn() => $transport1->start($gatherer2->getLocalParameters())),
+            async(fn() => $transport2->start($gatherer1->getLocalParameters())),
+        ];
+        foreach ($futures as $future) {
+            $future->await();
+        }
     }
 }

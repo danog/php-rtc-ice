@@ -15,13 +15,8 @@ use Evenement\EventEmitter;
 use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
 use Random\RandomException;
-use React\Cache\ArrayCache;
-use React\Cache\CacheInterface;
-use React\EventLoop\Loop;
-use React\EventLoop\LoopInterface;
-use React\EventLoop\TimerInterface;
-use React\Promise\Deferred;
-use React\Promise\PromiseInterface;
+use Amp\DeferredFuture;
+use Revolt\EventLoop;
 use Throwable;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\Exception\RuntimeException;
@@ -46,8 +41,7 @@ use Webrtc\STUN\Stun;
 use Webrtc\STUN\StunInterface;
 use Webrtc\TURN\Turn;
 use Webrtc\TURN\TurnInterface;
-use function React\Async\async;
-use function React\Async\await;
+use function Amp\async;
 
 /**
  * RTCIceConnection - ICE Connection Implementation
@@ -159,17 +153,15 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var LoggerInterface|null Logger instance */
     private ?LoggerInterface $logger = null;
 
-    /** @var CacheInterface Cache for host addresses */
-    private CacheInterface $cache;
+    /** @var array<string, mixed> Cache for host addresses */
+    private array $cache = [];
 
-    /** @var LoopInterface Event loop */
-    private LoopInterface $loop;
 
-    /** @var TimerInterface|null Periodic check timer */
-    private ?TimerInterface $periodicCheck = null;
+    /** @var string|null Handle of the periodic check timer */
+    private ?string $periodicCheck = null;
 
-    /** @var TimerInterface|null Consent check timer */
-    private ?TimerInterface $queryConsentTimer = null;
+    /** @var string|null Handle of the consent check timer */
+    private ?string $queryConsentTimer = null;
 
     /** @var bool Whether waiting for binding response */
     private bool $isBindingWait = false;
@@ -199,8 +191,6 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->localPassword = Utils::getRandomString(22);
         $this->tieBreaker = Utils::generateRandom64BitInt();
         $this->componentIds = range(1, 1);
-        $this->cache = new ArrayCache;
-        $this->loop = Loop::get();
     }
 
     /**
@@ -513,7 +503,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $message = Message::new(MessageClass::REQUEST, MessageMethod::BINDING);
         try {
             $stunServerIp = $this->resolveDNS($this->configuration->getStunServer());
-            [$response,] = await($stun->request($message, "$stunServerIp[0]:$stunServerIp[1]"));
+            [$response,] = $stun->request($message, "$stunServerIp[0]:$stunServerIp[1]");
             $address = $response->attributes()->get(MessageAttribute::XOR_MAPPED_ADDRESS);
 
             return $this->createCandidate($stun->getId(), $address[0], $address[1], $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
@@ -540,7 +530,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $configuration->setTurnServer($this->resolveDNS($this->configuration->getTurnServer()));
 
             $turn = Turn::create($configuration, $this, $this->logger);
-            await($turn->connect());
+            $turn->connect();
             return $turn;
         } catch (Throwable $e) {
             $this->logger?->error("Couldn't connect to Turn server {$e->getMessage()}", ["TurnServer" => $this->configuration->getTurnServer()]);
@@ -732,32 +722,30 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * the checklist was created. It then performs binding checks to establish connectivity
      * and begins periodic consent freshness tests once a connection is established.
      *
-     * @return PromiseInterface A promise that resolves when ICE connection is established or rejects on failure
+     * @return void Returns once the ICE connection is established.
      * @throws RuntimeException If ICE negotiation fails or preconditions aren’t met
      */
-    public function connect(): PromiseInterface
+    public function connect(): void
     {
-        return async(function () {
-            $this->validateConnectionPreconditions();
-            $this->createCheckList();
-            $this->unfreezeChecks();
-            $this->processEarlyChecks();
+        $this->validateConnectionPreconditions();
+        $this->createCheckList();
+        $this->unfreezeChecks();
+        $this->processEarlyChecks();
 
-            try {
-                await($this->bindCheck());
-            } catch (Throwable $e) {
-                $this->close();
-                throw new RuntimeException("ICE negotiation failed: " . $e->getMessage(), $e->getCode(), $e);
-            }
+        try {
+            $this->bindCheck();
+        } catch (Throwable $e) {
+            $this->close();
+            throw new RuntimeException("ICE negotiation failed: " . $e->getMessage(), $e->getCode(), $e);
+        }
 
-            if ($this->checkListState === CheckListState::ICE_FAILED) {
-                $this->close();
-                throw new RuntimeException("ICE negotiation failed");
-            }
+        if ($this->checkListState === CheckListState::ICE_FAILED) {
+            $this->close();
+            throw new RuntimeException("ICE negotiation failed");
+        }
 
-            // Start consent freshness tests
-            $this->periodicConsentCheck();
-        })();
+        // Start consent freshness tests
+        $this->periodicConsentCheck();
     }
 
     /**
@@ -1270,13 +1258,14 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * Sets up a timer to periodically attempt connectivity checks until
      * the process succeeds, fails, or times out.
      *
-     * @return PromiseInterface A promise that resolves when binding succeeds or rejects on failure
+     * @return void Returns once a candidate pair has been nominated.
+     * @throws RuntimeException If no pair could be nominated.
      */
-    private function bindCheck(): PromiseInterface
+    private function bindCheck(): void
     {
-        $deferred = new Deferred();
+        $deferred = new DeferredFuture();
 
-        $this->periodicCheck = $this->loop->addPeriodicTimer(0.02, function () use ($deferred): void {
+        $this->periodicCheck = EventLoop::repeat(0.02, function () use ($deferred): void {
             if ($this->isBindingWait) {
                 return;
             }
@@ -1284,16 +1273,17 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $this->isBindingWait = true;
 
             if ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_COMPLETED) || $this->tryCheckBinding()) {
-                $this->loop->cancelTimer($this->periodicCheck);
+                EventLoop::cancel($this->periodicCheck);
                 $this->periodicCheck = null;
-                $deferred->resolve(true);
+                $deferred->complete(true);
             } elseif ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED) || $this->tryFailedCount > self::RETRY_BINDING_MAX) {
-                $this->loop->cancelTimer($this->periodicCheck);
+                EventLoop::cancel($this->periodicCheck);
                 $this->periodicCheck = null;
-                $deferred->reject(new RuntimeException("Binding check failed"));
+                $deferred->error(new RuntimeException("Binding check failed"));
             }
         });
-        return $deferred->promise();
+
+        $deferred->getFuture()->await();
     }
 
     /**
@@ -1528,7 +1518,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $interval = $this->calculateConsentInterval();
         $failureCount = 0;
 
-        $this->queryConsentTimer = $this->loop->addPeriodicTimer($interval, function () use (&$failureCount): void {
+        $this->queryConsentTimer = EventLoop::repeat($interval, function () use (&$failureCount): void {
             foreach ($this->nominated as $pair) {
                 $message = $this->buildBindingMessage($pair, false);
                 $remoteAddress = implode(":", $pair->getRemoteAddress());
@@ -1580,7 +1570,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->emit('onClose');
         $this->removeAllListeners();
         if ($this->periodicCheck) {
-            $this->loop->cancelTimer($this->periodicCheck);
+            EventLoop::cancel($this->periodicCheck);
         }
 
         if (!$this->closed) {
@@ -1599,7 +1589,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function stopPeriodicConsentCheck(): void
     {
         if ($this->queryConsentTimer) {
-            $this->loop->cancelTimer($this->queryConsentTimer);
+            EventLoop::cancel($this->queryConsentTimer);
             $this->queryConsentTimer = null;
         }
     }
@@ -1814,7 +1804,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         async(function () use ($protocol, $responseMessage, $address) {
             try {
-                $response = await($protocol->request($responseMessage, $address));
+                $response = $protocol->request($responseMessage, $address);
                 $this->logger?->info("Binding response sent successfully", [
                     "Message" => $response[0]->humanReadable(),
                     "Address" => $response[1]
@@ -1984,23 +1974,13 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * Sets the consent check timer (only for testing purposes).
      *
-     * @param TimerInterface|null $queryConsentTimer The timer instance or null to unset.
+     * @param string|null $queryConsentTimer The timer handle or null to unset.
      *
      * @return void
      */
-    public function setQueryConsentTimer(?TimerInterface $queryConsentTimer): void
+    public function setQueryConsentTimer(?string $queryConsentTimer): void
     {
         $this->queryConsentTimer = $queryConsentTimer;
-    }
-
-    /**
-     * Gets the event loop used for timers and asynchronous execution. (only for testing purposes)
-     *
-     * @return LoopInterface The event loop instance.
-     */
-    public function getLoop(): LoopInterface
-    {
-        return $this->loop;
     }
 
     /**

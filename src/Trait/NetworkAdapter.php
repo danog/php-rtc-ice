@@ -12,7 +12,6 @@
 namespace Webrtc\ICE\Trait;
 
 use Webrtc\ICE\Utils;
-use function React\Async\await;
 
 /**
  * Network Adapter Trait
@@ -49,9 +48,7 @@ trait NetworkAdapter
      */
     public function getHostAddresses(bool $useIPv4, bool $useIPv6): array
     {
-        $hostAddresses = await($this?->cache->has("hostAddresses"))
-            ? await($this->cache->get("hostAddresses"))
-            : $this->getHostFromNetworkAdapter();
+        $hostAddresses = $this->cache["hostAddresses"] ?? $this->getHostFromNetworkAdapter();
 
         return $this->filterAddresses($hostAddresses, $useIPv4, $useIPv6);
     }
@@ -88,7 +85,7 @@ trait NetworkAdapter
             }
         }
 
-        $this->cache->set("hostAddresses", $hostAddresses);
+        $this->cache["hostAddresses"] = $hostAddresses;
         return $hostAddresses;
     }
 

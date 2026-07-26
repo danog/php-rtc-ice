@@ -7,7 +7,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use PHPUnit\Framework\TestCase;
 use Random\RandomException;
-use React\Promise\Deferred;
+use Amp\DeferredFuture;
 use ReflectionMethod;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\Exception\RuntimeException;
@@ -46,10 +46,8 @@ use Webrtc\TURN\Trait\TurnConnection;
 use Webrtc\TURN\Turn;
 use Webrtc\TURN\TurnTcpConnection;
 use Webrtc\TURN\TurnUdpConnection;
-use function React\Async\async;
-use function React\Async\await;
-use function React\Async\delay;
-use function React\Async\parallel;
+use function Amp\async;
+use function Amp\delay;
 
 #[UsesClass(RTCIceProtocolConfiguration::class)]
 #[UsesClass(Utils::class)]
@@ -185,9 +183,9 @@ class RTCIceConnectionTest extends TestCase
         $this->getData($connection1, $data1);
         $this->getData($connection2, $data2);
 
-        await($connection1->connect());
+        async(fn() => $connection1->connect());
         delay(1);
-        await($connection2->connect());
+        async(fn() => $connection2->connect());
 
         $connection1->sendData('Hello');
         delay(.01);
@@ -229,12 +227,12 @@ class RTCIceConnectionTest extends TestCase
         $this->getData($connection1, $data1);
         $this->getData($connection2, $data2);
 
-        $connection1->connect();
+        async(fn() => $connection1->connect());
 
         foreach ($connection1->getLocalCandidates() as $candidate) {
             $connection2->addRemoteCandidate($candidate);
         }
-        $connection2->connect();
+        async(fn() => $connection2->connect());
 
 
         foreach ($connection2->getLocalCandidates() as $candidate) {
@@ -475,9 +473,9 @@ class RTCIceConnectionTest extends TestCase
 
         async(function () use ($connection1) {
             delay(1);
-            $connection1->connect();
+            async(fn() => $connection1->connect());
         })();
-        $connection2->connect();
+        async(fn() => $connection2->connect());
 
         delay(2);
 
@@ -570,7 +568,7 @@ class RTCIceConnectionTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Local candidates gathering was not performed');
-        await($connection->connect());
+        $connection->connect();
 
         $connection->close();
     }
@@ -587,7 +585,7 @@ class RTCIceConnectionTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('ICE negotiation failed');
-        await($connection->connect());
+        $connection->connect();
 
         $connection->close();
     }
@@ -602,7 +600,7 @@ class RTCIceConnectionTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('ICE negotiation failed: Binding check failed');
-        await($connection->connect());
+        $connection->connect();
 
         $connection->close();
     }
@@ -616,7 +614,7 @@ class RTCIceConnectionTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Remote username or password is missing');
-        await($connection->connect());
+        $connection->connect();
 
         $connection->close();
     }
@@ -685,7 +683,7 @@ class RTCIceConnectionTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('ICE negotiation failed');
-        await($connection->connect());
+        $connection->connect();
 
         $connection->close();
     }
@@ -925,7 +923,7 @@ class RTCIceConnectionTest extends TestCase
         $periodicConsentCheckMock = function () use ($connection1) {
             $failureCount = 0;
 
-            $queryConsentTimer = $connection1->getLoop()->addPeriodicTimer(1, function () use (&$failureCount, $connection1): void {
+            $queryConsentTimer = \Revolt\EventLoop::repeat(1, function () use (&$failureCount, $connection1): void {
                 foreach ($connection1->getNominated() as $pair) {
                     $message = $connection1->buildBindingMessage($pair, false);
                     $remoteAddress = implode(":", $pair->getRemoteAddress());
@@ -969,7 +967,7 @@ class RTCIceConnectionTest extends TestCase
         $periodicConsentCheckMock = function () use ($connection1) {
             $failureCount = 0;
 
-            $queryConsentTimer = $connection1->getLoop()->addPeriodicTimer(1, function () use (&$failureCount, $connection1): void {
+            $queryConsentTimer = \Revolt\EventLoop::repeat(1, function () use (&$failureCount, $connection1): void {
                 foreach ($connection1->getNominated() as $pair) {
                     $message = $connection1->buildBindingMessage($pair, false);
                     $remoteAddress = implode(":", $pair->getRemoteAddress());
@@ -1312,6 +1310,11 @@ class RTCIceConnectionTest extends TestCase
 
     private function asyncConnect(RTCIceConnection $connection1, RTCIceConnection $connection2): void
     {
-        await(parallel([fn() => $connection1->connect(), fn() => $connection2->connect()]));
+        // Both agents have to be checking at the same time for the exchange to converge, so
+        // each connect() runs in its own fiber and the test waits for both.
+        $futures = [async(fn() => $connection1->connect()), async(fn() => $connection2->connect())];
+        foreach ($futures as $future) {
+            $future->await();
+        }
     }
 }

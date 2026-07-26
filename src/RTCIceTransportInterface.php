@@ -12,7 +12,6 @@
 namespace Webrtc\ICE;
 
 use Evenement\EventEmitterInterface;
-use React\Promise\PromiseInterface;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\IceRole;
 
@@ -32,7 +31,7 @@ interface RTCIceTransportInterface extends EventEmitterInterface
 
     public function getIceConnection(): RTCIceConnectionInterface;
 
-    public function start(RTCIceParameters $remoteIceParameters): PromiseInterface;
+    public function start(RTCIceParameters $remoteIceParameters): void;
 
     public function stop(): void;
 }
