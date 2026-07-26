@@ -1114,14 +1114,18 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $message = $this->buildBindingMessage($pair, true);
         $remoteAddress = implode(":", $pair->getRemoteAddress());
 
-        $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword)
-            ->then(function () use ($pair) {
+        // The request blocks, so it runs in its own fiber: the caller drives the check list
+        // and must not stall on one pair's transaction.
+        async(function () use ($pair, $message, $remoteAddress): void {
+            try {
+                $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
                 $pair->setNominated(true);
                 $this->markPairSucceeded($pair);
-            })->catch(function () use ($pair) {
+            } catch (Throwable) {
                 $this->logger?->info("Check $pair failed: could not nominate pair");
                 $this->markPairFailed($pair);
-            });
+            }
+        });
     }
 
     /**
@@ -1165,9 +1169,18 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $message = $this->buildBindingMessage($pair, $nominate);
         $remoteAddress = implode(":", $pair->getRemoteAddress());
 
-        $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword)
-            ->then(fn($res) => $this->handleCheckBinding($res[1], $pair, $nominate))
-            ->catch(fn($e) => $this->handleBindingError($e, $pair, $message));
+        // The request blocks, so it runs in its own fiber: several pairs are checked
+        // concurrently and the check list has to keep moving while each is outstanding.
+        async(function () use ($pair, $message, $remoteAddress, $nominate): void {
+            try {
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                $this->handleCheckBinding($address, $pair, $nominate);
+            } catch (TransactionExceptionInterface $e) {
+                // Only a transaction failure says anything about this pair; anything else is a
+                // bug and must not be quietly recorded as the pair being unreachable.
+                $this->handleBindingError($e, $pair, $message);
+            }
+        });
     }
 
     /**
@@ -1272,15 +1285,30 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
             $this->isBindingWait = true;
 
-            if ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_COMPLETED) || $this->tryCheckBinding()) {
-                EventLoop::cancel($this->periodicCheck);
-                $this->periodicCheck = null;
-                $deferred->complete(true);
-            } elseif ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED) || $this->tryFailedCount > self::RETRY_BINDING_MAX) {
-                EventLoop::cancel($this->periodicCheck);
-                $this->periodicCheck = null;
-                $deferred->error(new RuntimeException("Binding check failed"));
-            }
+            // The check blocks on STUN transactions, and a repeat callback that suspends is
+            // not re-entered until it returns. Running it inline would therefore stop the
+            // ticks that retry the remaining pairs, and a first pair that needs a retry would
+            // wedge the whole exchange. The isBindingWait flag still keeps one check in
+            // flight at a time.
+            async(function () use ($deferred): void {
+                $completed = (isset($this->checkListState) && $this->checkListState === CheckListState::ICE_COMPLETED)
+                    || $this->tryCheckBinding();
+
+                if ($this->periodicCheck === null) {
+                    // Another tick already settled the outcome.
+                    return;
+                }
+
+                if ($completed) {
+                    EventLoop::cancel($this->periodicCheck);
+                    $this->periodicCheck = null;
+                    $deferred->complete(true);
+                } elseif ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED) || $this->tryFailedCount > self::RETRY_BINDING_MAX) {
+                    EventLoop::cancel($this->periodicCheck);
+                    $this->periodicCheck = null;
+                    $deferred->error(new RuntimeException("Binding check failed"));
+                }
+            });
         });
 
         $deferred->getFuture()->await();
@@ -1523,14 +1551,19 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
                 $message = $this->buildBindingMessage($pair, false);
                 $remoteAddress = implode(":", $pair->getRemoteAddress());
 
-                $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword)->then(function () use (&$failureCount) {
-                    $failureCount = 0; // Reset failures on success
-                })->catch(function (Throwable $e) use (&$failureCount, $pair) {
-                    $failureCount++;
-                    $this->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
-                    if ($failureCount >= self::CONSENT_FAILURES) {
-                        $this->logger?->error("Consent to send expired after $failureCount failures");
-                        $this->close();
+                // Each check blocks, and a repeat callback that suspends is not re-entered,
+                // so the checks run in their own fibers.
+                async(function () use ($pair, $message, $remoteAddress, &$failureCount): void {
+                    try {
+                        $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                        $failureCount = 0; // Reset failures on success
+                    } catch (Throwable $e) {
+                        $failureCount++;
+                        $this->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
+                        if ($failureCount >= self::CONSENT_FAILURES) {
+                            $this->logger?->error("Consent to send expired after $failureCount failures");
+                            $this->close();
+                        }
                     }
                 });
             }
