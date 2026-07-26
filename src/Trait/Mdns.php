@@ -25,7 +25,7 @@ use Webrtc\MDNS\Factory;
  * - Resolves .local domains to IPv4 addresses (A records)
  * - Validates whether a domain is an mDNS-compatible .local domain
  * - Integrated error handling with optional logging
- * - Asynchronous operation using ReactPHP's async functionality
+ * - Resolution blocks the calling fiber rather than returning a promise
  *
  * @see https://datatracker.ietf.org/doc/html/rfc6762 RFC 6762 for mDNS specifications
  */

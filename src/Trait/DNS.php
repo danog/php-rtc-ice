@@ -22,7 +22,7 @@ use function Amp\Dns\resolve;
  *
  * Features:
  * - Automatic fallback to Google's public DNS (8.8.8.8) if no system nameservers are configured
- * - Asynchronous DNS resolution using ReactPHP
+ * - DNS resolution through amphp
  * - Caching of DNS queries for improved performance
  * - Support for both IPv4 and IPv6 addresses
  *
@@ -33,11 +33,10 @@ trait DNS
      * Resolve a network address to its IP equivalent
      *
      * This method takes an address array (typically [host, port]) and resolves the host
-     * to an IP address if it isn't already one. The resolution process uses system-configured
-     * nameservers with a fallback to Google's public DNS.
+     * to an IP address if it isn't already one, through the system resolver, which already
+     * handles caching and fallback.
      *
-     * The method supports both synchronous and asynchronous operation through ReactPHP's async
-     * functionality and includes built-in DNS caching.
+     * The lookup blocks the calling fiber rather than returning a promise.
      *
      * @param array $address An array containing [host, port] where host can be either:
      *                       - A domain name (e.g., 'example.com')
