@@ -1,7 +1,7 @@
 {
     "name": "danog/php-rtc-ice",
     "type": "library",
-    "description": "A PHP implementation of WebRTC's RTC ICE interface for bidirectional peer-to-peer data communication. Fork with FFI made optional and a pure-PHP DTLS/SRTP stack, maintained for MadelineProto.",
+    "description": "WebRTC ICE connectivity in PHP, ported to Amp v3 fibers and sockets. MadelineProto's PHP 8.2+ fork integrates the modular danog/php-rtc STUN, TURN, and mDNS stack.",
     "keywords": [
         "webrtc",
         "ice",
