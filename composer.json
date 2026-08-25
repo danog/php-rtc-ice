@@ -29,10 +29,10 @@
         "amphp/amp": "^3.1",
         "amphp/socket": "^2.3",
         "amphp/dns": "^2.4",
-        "quasarstream/exception": "^1.0",
-        "quasarstream/turn": "^1.0",
-        "quasarstream/stun": "^1.0",
-        "quasarstream/mdns": "^1.0",
+        "danog/php-rtc-exception": "^1.0",
+        "danog/php-rtc-turn": "^1.0",
+        "danog/php-rtc-stun": "^1.0",
+        "danog/php-rtc-mdns": "^1.0",
         "psr/log": "^3.0",
         "symfony/polyfill-php84": "^1.32"
     },
@@ -51,8 +51,5 @@
             "Tests\\Webrtc\\ICE\\": "tests"
         }
     },
-    "minimum-stability": "dev",
-    "replace": {
-        "quasarstream/ice": "self.version"
-    }
+    "minimum-stability": "dev"
 }
