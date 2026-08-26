@@ -298,10 +298,20 @@ class RTCIceCandidate
         $candidate = new static((int)$sdpParts[1]);
         $candidate->setFoundation($sdpParts[0] ?? null);
         $candidate->setPriority($sdpParts[3] ?? null);
-        $candidate->setTransport(constant(TransportType::class . "::" . strtolower($sdpParts[2])));
+        $candidate->setTransport(match (strtolower($sdpParts[2])) {
+            'udp' => TransportType::udp,
+            'tcp' => TransportType::tcp,
+            default => throw new InvalidArgumentException("Invalid transport type"),
+        });
         $candidate->setHost($sdpParts[4]);
         $candidate->setPort((int)$sdpParts[5]);
-        $candidate->setType(constant(CandidateType::class . "::" . $sdpParts[7]));
+        $candidate->setType(match ($sdpParts[7]) {
+            'host' => CandidateType::host,
+            'srflx' => CandidateType::srflx,
+            'prflx' => CandidateType::prflx,
+            'relay' => CandidateType::relay,
+            default => throw new InvalidArgumentException("Invalid candidate type"),
+        });
 
         // Parse extensions (raddr, rport, tcptype, generation)
         for ($i = 8; $i < count($sdpParts); $i += 2) {
