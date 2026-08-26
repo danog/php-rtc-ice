@@ -1810,7 +1810,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         if ($this->isControllingRole() && $attributes->has(MessageAttribute::ICE_CONTROLLING)) {
             $this->logger?->info("Role conflict detected: expected controlling role.");
-            if ($this->tieBreaker >= $attributes->get(MessageAttribute::ICE_CONTROLLING)) {
+            if (Utils::compareUnsigned64((int) $this->tieBreaker, $attributes->get(MessageAttribute::ICE_CONTROLLING)) >= 0) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -1819,7 +1819,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $this->setRole(IceRole::Controlled);
         } elseif ($this->isControlledRole() && $attributes->has(MessageAttribute::ICE_CONTROLLED)) {
             $this->logger?->info("Role conflict detected: expected controlled role.");
-            if ($this->tieBreaker < $attributes->get(MessageAttribute::ICE_CONTROLLED)) {
+            if (Utils::compareUnsigned64((int) $this->tieBreaker, $attributes->get(MessageAttribute::ICE_CONTROLLED)) < 0) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;

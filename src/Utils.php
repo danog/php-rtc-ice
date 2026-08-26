@@ -72,6 +72,28 @@ class Utils
     }
 
     /**
+     * Compare two 64-bit tiebreaker values as unsigned integers.
+     *
+     * PHP integers are signed, and the STUN ICE-CONTROLLING/ICE-CONTROLLED
+     * attributes carry an unsigned 64-bit value, so a peer's tiebreaker with
+     * the high bit set is unpacked as a negative int. When the two operands
+     * share a sign the signed order already matches the unsigned order; when
+     * the signs differ, the negative operand is the larger unsigned value.
+     *
+     * @param int $a The first tiebreaker.
+     * @param int $b The second tiebreaker.
+     * @return int -1 if $a < $b, 0 if equal, 1 if $a > $b (unsigned).
+     */
+    public static function compareUnsigned64(int $a, int $b): int
+    {
+        if (($a < 0) === ($b < 0)) {
+            return $a <=> $b;
+        }
+
+        return $a < 0 ? 1 : -1;
+    }
+
+    /**
      * Parse an address string to extract host and port.
      *
      * @param string $address The input address (with or without a scheme).
