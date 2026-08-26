@@ -78,8 +78,8 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
     /* Properties */
 
-    /** @var string tiebreaker value for role conflicts */
-    private string $tieBreaker;
+    /** @var int tiebreaker value for role conflicts */
+    private int $tieBreaker;
 
     /** @var string Local ICE username fragment */
     private string $localUsername;
@@ -1810,7 +1810,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         if ($this->isControllingRole() && $attributes->has(MessageAttribute::ICE_CONTROLLING)) {
             $this->logger?->info("Role conflict detected: expected controlling role.");
-            if (Utils::compareUnsigned64((int) $this->tieBreaker, $attributes->get(MessageAttribute::ICE_CONTROLLING)) >= 0) {
+            if (($this->tieBreaker ^ PHP_INT_MIN) >= ($attributes->get(MessageAttribute::ICE_CONTROLLING) ^ PHP_INT_MIN)) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -1819,7 +1819,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $this->setRole(IceRole::Controlled);
         } elseif ($this->isControlledRole() && $attributes->has(MessageAttribute::ICE_CONTROLLED)) {
             $this->logger?->info("Role conflict detected: expected controlled role.");
-            if (Utils::compareUnsigned64((int) $this->tieBreaker, $attributes->get(MessageAttribute::ICE_CONTROLLED)) < 0) {
+            if (($this->tieBreaker ^ PHP_INT_MIN) < ($attributes->get(MessageAttribute::ICE_CONTROLLED) ^ PHP_INT_MIN)) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -2011,11 +2011,11 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * Sets the tie-breaker value used during ICE role conflict resolution.
      *
-     * @param string $tieBreaker A unique numeric string.
+     * @param int $tieBreaker A unique 64-bit tiebreaker value.
      *
      * @return void
      */
-    public function setTieBreaker(string $tieBreaker): void
+    public function setTieBreaker(int $tieBreaker): void
     {
         $this->tieBreaker = $tieBreaker;
     }

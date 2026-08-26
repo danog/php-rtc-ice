@@ -57,40 +57,14 @@ class Utils
     }
 
     /**
-     * Generate a random positive 64-bit integer.
+     * Generate a random 64-bit integer.
      *
-     * @return string The random 64-bit integer as a decimal string.
+     * @return int The random 64-bit integer.
      * @throws RandomException If randomness cannot be generated securely.
      */
-    public static function generateRandom64BitInt(): string
+    public static function generateRandom64BitInt(): int
     {
-        $high = random_int(0, 0x7FFFFFFF);
-        $low = random_int(0, 0xFFFFFFFF);
-
-        // $high is capped to 31 bits, so the result always fits in a signed 64-bit integer.
-        return (string) (($high << 32) | $low);
-    }
-
-    /**
-     * Compare two 64-bit tiebreaker values as unsigned integers.
-     *
-     * PHP integers are signed, and the STUN ICE-CONTROLLING/ICE-CONTROLLED
-     * attributes carry an unsigned 64-bit value, so a peer's tiebreaker with
-     * the high bit set is unpacked as a negative int. When the two operands
-     * share a sign the signed order already matches the unsigned order; when
-     * the signs differ, the negative operand is the larger unsigned value.
-     *
-     * @param int $a The first tiebreaker.
-     * @param int $b The second tiebreaker.
-     * @return int -1 if $a < $b, 0 if equal, 1 if $a > $b (unsigned).
-     */
-    public static function compareUnsigned64(int $a, int $b): int
-    {
-        if (($a < 0) === ($b < 0)) {
-            return $a <=> $b;
-        }
-
-        return $a < 0 ? 1 : -1;
+        return random_int(PHP_INT_MIN, PHP_INT_MAX);
     }
 
     /**
