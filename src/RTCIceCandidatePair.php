@@ -11,6 +11,7 @@
 
 namespace Webrtc\ICE;
 
+use Amp\Socket\InternetAddress;
 use Webrtc\ICE\Enum\RTCIceCandidatePairStats;
 use Webrtc\STUN\IceConnectionProtocolInterface;
 
@@ -80,12 +81,12 @@ class RTCIceCandidatePair
     /**
      * Gets the local candidate's address information
      *
-     * @return array An array containing [host, port] of the local candidate
+     * @return InternetAddress The local candidate address
      */
-    public function getLocalAddress(): array
+    public function getLocalAddress(): InternetAddress
     {
         $candidate = $this->protocol->getCandidate();
-        return [$candidate->getHost(), $candidate->getPort()];
+        return new InternetAddress($candidate->getHost(), $candidate->getPort());
     }
 
     /**
@@ -101,11 +102,11 @@ class RTCIceCandidatePair
     /**
      * Gets the remote candidate's address information
      *
-     * @return array An array containing [host, port] of the remote candidate
+     * @return InternetAddress The remote candidate address
      */
-    public function getRemoteAddress(): array
+    public function getRemoteAddress(): InternetAddress
     {
-        return [$this->remoteCandidate->getHost(), $this->remoteCandidate->getPort()];
+        return new InternetAddress($this->remoteCandidate->getHost(), $this->remoteCandidate->getPort());
     }
 
     /**
@@ -188,7 +189,7 @@ class RTCIceCandidatePair
      */
     public function __toString(): string
     {
-        return sprintf("CandidatePair(Local Address: %s -> Remote Address: %s | State: %s)", implode(":", $this->getLocalAddress()), implode(":", $this->getRemoteAddress()), $this->state->name);
+        return sprintf("CandidatePair(Local Address: %s -> Remote Address: %s | State: %s)", $this->getLocalAddress(), $this->getRemoteAddress(), $this->state->name);
     }
 
     /**

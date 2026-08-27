@@ -17,6 +17,7 @@ use Ramsey\Uuid\Uuid;
 use Random\RandomException;
 use Amp\DeferredFuture;
 use Amp\Future;
+use Amp\Socket\InternetAddress;
 use Revolt\EventLoop;
 use Throwable;
 use Webrtc\Exception\InvalidArgumentException;
@@ -503,10 +504,10 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $message = Message::new(MessageClass::REQUEST, MessageMethod::BINDING);
         try {
             $stunServerIp = $this->resolveDNS($this->configuration->getStunServer());
-            [$response,] = $stun->request($message, "$stunServerIp[0]:$stunServerIp[1]");
+            [$response,] = $stun->request($message, new InternetAddress($stunServerIp[0], $stunServerIp[1]));
             $address = $response->attributes()->get(MessageAttribute::XOR_MAPPED_ADDRESS);
 
-            return $this->createCandidate($stun->getId(), $address[0], $address[1], $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
+            return $this->createCandidate($stun->getId(), $address->getAddress(), $address->getPort(), $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
         } catch (Throwable $e) {
             $this->logger?->error(sprintf("Could not request stun server: %s - %s", $e->getMessage(), implode(":", $this->configuration->getStunServer())));
             $stun->close();
@@ -573,7 +574,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function getStun(string $address): StunInterface|false
     {
         try {
-            return Stun::create($this, $address, $this->logger, $this->icePortRange);
+            return Stun::create($this, new InternetAddress($address, 0), $this->logger, $this->icePortRange);
         } catch (Throwable) {
             return false;
         }
@@ -944,12 +945,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * and potentially starting a binding check on that pair.
      *
      * @param MessageInterface $message The incoming STUN message
-     * @param string $address The source address of the message
+     * @param InternetAddress $address The source address of the message
      * @param IceConnectionProtocolInterface $protocol The local protocol that received the message
      * @return void
      * @throws RandomException If there's an error in random generation
      */
-    public function checkIncoming(MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol): void
+    public function checkIncoming(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol): void
     {
         $remoteCandidate = $this->findOrCreateRemoteCandidate($message, $address, $protocol->getCandidate()->getComponentId());
         $pair = $this->findPair($protocol, $remoteCandidate) ?? $this->createNewCandidatePair($protocol, $remoteCandidate);
@@ -967,14 +968,15 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * creates a new peer-reflexive candidate if no match is found.
      *
      * @param MessageInterface $message The incoming STUN message
-     * @param string $address The source address
+     * @param InternetAddress $address The source address
      * @param int $componentId The component ID
      * @return RTCIceCandidate The matching or newly created remote candidate
      * @throws RandomException If there's an error in random generation
      */
-    private function findOrCreateRemoteCandidate(MessageInterface $message, string $address, int $componentId): RTCIceCandidate
+    private function findOrCreateRemoteCandidate(MessageInterface $message, InternetAddress $address, int $componentId): RTCIceCandidate
     {
-        [$host, $port] = Utils::parseAddressToHostPort($address);
+        $host = $address->getAddress();
+        $port = $address->getPort();
         foreach ($this->remoteCandidates as $candidate) {
             if (trim($candidate->getHost(), '[]') === $host && $candidate->getPort() === $port) {
                 assert($candidate->getComponentId() === $componentId);
@@ -1058,16 +1060,17 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * Handles a successful STUN binding response by validating the source address,
      * updating nomination status, and marking the pair as succeeded.
      *
-     * @param string $address The source address of the response
+     * @param InternetAddress $address The source address of the response
      * @param RTCIceCandidatePair $pair The candidate pair being checked
      * @param bool $nominate Whether the controlling agent is nominating this pair
      * @return void
      * @throws RandomException If there's an error in random generation
      */
-    public function handleCheckBinding(string $address, RTCIceCandidatePair $pair, bool $nominate): void
+    public function handleCheckBinding(InternetAddress $address, RTCIceCandidatePair $pair, bool $nominate): void
     {
         // Validate source address
-        if ($address !== implode(":", $pair->getRemoteAddress())) {
+        $remoteAddress = $pair->getRemoteAddress();
+        if ($address->getAddress() !== $remoteAddress->getAddress() || $address->getPort() !== $remoteAddress->getPort()) {
             $this->logger?->debug("Check $pair failed: source address mismatch");
             $this->markPairFailed($pair);
 
@@ -1115,7 +1118,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->logger?->info("Check $pair nominating pair");
         $this->nominating[] = $pair->getComponentId();
         $message = $this->buildBindingMessage($pair, true);
-        $remoteAddress = implode(":", $pair->getRemoteAddress());
+        $remoteAddress = $pair->getRemoteAddress();
 
         // The request blocks, so it runs in its own fiber: the caller drives the check list
         // and must not stall on one pair's transaction.
@@ -1170,7 +1173,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->changeCandidatePairState($pair, RTCIceCandidatePairStats::IN_PROGRESS);
         $nominate = $this->isControllingRole() && !$this->remoteIsLite;
         $message = $this->buildBindingMessage($pair, $nominate);
-        $remoteAddress = implode(":", $pair->getRemoteAddress());
+        $remoteAddress = $pair->getRemoteAddress();
 
         // The request blocks, so it runs in its own fiber: several pairs are checked
         // concurrently and the check list has to keep moving while each is outstanding.
@@ -1614,7 +1617,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->queryConsentTimer = EventLoop::repeat($interval, function () use (&$failureCount): void {
             foreach ($this->nominated as $pair) {
                 $message = $this->buildBindingMessage($pair, false);
-                $remoteAddress = implode(":", $pair->getRemoteAddress());
+                $remoteAddress = $pair->getRemoteAddress();
 
                 // Each check blocks, and a repeat callback that suspends is not re-entered,
                 // so the checks run in their own fibers.
@@ -1742,7 +1745,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     {
         if (isset($this->nominated[$componentId])) {
             $pair = $this->nominated[$componentId];
-            $pair->getProtocol()->send($data, implode(":", $pair->getRemoteAddress()));
+            $pair->getProtocol()->send($data, $pair->getRemoteAddress());
         } else {
             throw new RuntimeException("No Connection");
         }
@@ -1770,7 +1773,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * Also processes early or ongoing connectivity checks.
      *
      * @param MessageInterface $message The incoming STUN message.
-     * @param string $address The address from which the message was received.
+     * @param InternetAddress $address The address from which the message was received.
      * @param IceConnectionProtocolInterface $protocol The protocol used for this connection.
      * @param string $data The raw received data.
      *
@@ -1778,7 +1781,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @throws RandomException
      *
      */
-    public function onRequestReceived(MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol, string $data): void
+    public function onRequestReceived(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol, string $data): void
     {
         if (!$this->isBindingRequest($message) || !$this->authenticateRequest($message, $data)) {
             $this->respondError($message, $address, $protocol, [400, "Bad Request"]);
@@ -1844,14 +1847,14 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * If a role conflict is detected, either resolves the conflict or sends a role conflict error.
      *
      * @param MessageInterface $message The incoming message.
-     * @param string $address The sender address.
+     * @param InternetAddress $address The sender address.
      * @param IceConnectionProtocolInterface $protocol The associated protocol.
      *
      * @return bool True, if a conflict was handled and the message shouldn’t be processed further.
      * @throws RandomException
      *
      */
-    public function handleRoleConflict(MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol): bool
+    public function handleRoleConflict(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol): bool
     {
         $attributes = $message->attributes();
 
@@ -1889,16 +1892,16 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * Adds the necessary attributes and message integrity, then sends the response asynchronously.
      *
      * @param MessageInterface $message The original binding request.
-     * @param string $address The destination address.
+     * @param InternetAddress $address The destination address.
      * @param IceConnectionProtocolInterface $protocol The protocol to use for sending.
      *
      * @return void
      * @throws RandomException
      *
      */
-    public function sendBindingResponse(MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol): void
+    public function sendBindingResponse(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol): void
     {
-        $responseAttributes = [MessageAttribute::XOR_MAPPED_ADDRESS->name => Utils::parseAddressToHostPort($address)];
+        $responseAttributes = [MessageAttribute::XOR_MAPPED_ADDRESS->name => $address];
         $responseMessage = Message::new(MessageClass::RESPONSE, MessageMethod::BINDING, $responseAttributes);
         $responseMessage->setTransactionId($message->getTransactionId());
         $responseMessage->addMessageIntegrity($this->localPassword);
@@ -1922,7 +1925,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * Constructs and sends a binding error message using the given error code.
      *
      * @param MessageInterface $orgMessage The original message to respond to.
-     * @param string $address The address to send the error to.
+     * @param InternetAddress $address The address to send the error to.
      * @param IceConnectionProtocolInterface $protocol The protocol used for transmission.
      * @param array $errorCode The error code and reason [code, reason].
      *
@@ -1930,7 +1933,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @throws RandomException
      *
      */
-    public function respondError(MessageInterface $orgMessage, string $address, IceConnectionProtocolInterface $protocol, array $errorCode): void
+    public function respondError(MessageInterface $orgMessage, InternetAddress $address, IceConnectionProtocolInterface $protocol, array $errorCode): void
     {
         $messageAttr = [MessageAttribute::ERROR_CODE->name => $errorCode];
         $message = Message::new(MessageClass::ERROR, $orgMessage->getMessageMethod(), $messageAttr);

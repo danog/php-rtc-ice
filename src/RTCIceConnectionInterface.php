@@ -11,6 +11,7 @@
 
 namespace Webrtc\ICE;
 
+use Amp\Socket\InternetAddress;
 use Throwable;
 use Webrtc\ICE\Enum\IceRole;
 use Webrtc\STUN\IceConnectionProtocolInterface;
@@ -69,7 +70,7 @@ interface RTCIceConnectionInterface
 
     public function unfreezeChecks(): void;
 
-    public function checkIncoming(MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol): void;
+    public function checkIncoming(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol): void;
 
     public function completeCheckAction(RTCIceCandidatePair $pair): void;
 
@@ -81,9 +82,9 @@ interface RTCIceConnectionInterface
 
     public function onDataReceived(string $data, int $componentId): void;
 
-    public function onRequestReceived(MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol, string $data): void;
+    public function onRequestReceived(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol, string $data): void;
 
-    public function respondError(MessageInterface $orgMessage, string $address, IceConnectionProtocolInterface $protocol, array $errorCode): void;
+    public function respondError(MessageInterface $orgMessage, InternetAddress $address, IceConnectionProtocolInterface $protocol, array $errorCode): void;
 
     public function onClose(): void;
 

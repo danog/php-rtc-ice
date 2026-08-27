@@ -2,6 +2,7 @@
 
 namespace Tests\Webrtc\ICE;
 
+use Amp\Socket\InternetAddress;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -484,7 +485,7 @@ class RTCIceConnectionTest extends TestCase
             ->onlyMethods(['onRequestReceived'])
             ->getMock();
 
-        $onRequestReceivedMock = function (MessageInterface $message, string $address, IceConnectionProtocolInterface $protocol, string $data) use ($connection2) {
+        $onRequestReceivedMock = function (MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol, string $data) use ($connection2) {
             if ($message->attributes()->has(MessageAttribute::USE_CANDIDATE)) {
                 $connection2->respondError($message, $address, $protocol, [500, 'Internal Error']);
             } else {
@@ -746,7 +747,7 @@ class RTCIceConnectionTest extends TestCase
             $connection->changeCandidatePairState($pair, RTCIceCandidatePairStats::IN_PROGRESS);
             $nominate = $connection->isControllingRole();
             $message = $connection->buildBindingMessage($pair, $nominate);
-            $remoteAddress = implode(':', $pair->getRemoteAddress());
+            $remoteAddress = $pair->getRemoteAddress();
 
             // Mirrors the real startCheckBinding(): the request blocks, so it runs in its
             // own fiber and the check list keeps moving while it is outstanding.
@@ -1022,7 +1023,7 @@ class RTCIceConnectionTest extends TestCase
             $queryConsentTimer = \Revolt\EventLoop::repeat(1, function () use (&$failureCount, $connection1): void {
                 foreach ($connection1->getNominated() as $pair) {
                     $message = $connection1->buildBindingMessage($pair, false);
-                    $remoteAddress = implode(":", $pair->getRemoteAddress());
+                    $remoteAddress = $pair->getRemoteAddress();
 
                     // Mirrors periodicConsentCheck(): the request blocks, so it runs in its
                     // own fiber and the timer callback stays free to fire again.
@@ -1071,7 +1072,7 @@ class RTCIceConnectionTest extends TestCase
             $queryConsentTimer = \Revolt\EventLoop::repeat(1, function () use (&$failureCount, $connection1): void {
                 foreach ($connection1->getNominated() as $pair) {
                     $message = $connection1->buildBindingMessage($pair, false);
-                    $remoteAddress = implode(":", $pair->getRemoteAddress());
+                    $remoteAddress = $pair->getRemoteAddress();
 
                     // Mirrors periodicConsentCheck(): the request blocks, so it runs in its
                     // own fiber and the timer callback stays free to fire again.
@@ -1291,7 +1292,7 @@ class RTCIceConnectionTest extends TestCase
         ];
         $message = Message::new(MessageClass::REQUEST, MessageMethod::BINDING, $messageAttr);
 
-        $connection->checkIncoming($message, "127.0.0.0:1234", $protocolMock);
+        $connection->checkIncoming($message, new InternetAddress("127.0.0.0", 1234), $protocolMock);
 
         $this->assertCount(1, $connection->getRemoteCandidates());
         $candidate = $connection->getRemoteCandidates()[0];
@@ -1321,7 +1322,7 @@ class RTCIceConnectionTest extends TestCase
 
         $message = Message::new(MessageClass::REQUEST, MessageMethod::ALLOCATE);
 
-        $connection->onRequestReceived($message, "127.0.0.1:1234", $protocolMock, (string)$message);
+        $connection->onRequestReceived($message, new InternetAddress("127.0.0.1", 1234), $protocolMock, (string)$message);
         $this->assertCount(1, $messages);
         $this->assertEquals(MessageMethod::ALLOCATE, $messages[0]->getMessageMethod());
         $this->assertEquals(MessageClass::ERROR, $messages[0]->getMessageClass());
@@ -1350,13 +1351,13 @@ class RTCIceConnectionTest extends TestCase
         $remoteCandidate->setFoundation('foundation');
         $remoteCandidate->setTransport(TransportType::udp);
         $remoteCandidate->setPriority(123456);
-        $remoteCandidate->setHost('test.local');
+        $remoteCandidate->setHost('192.0.2.1');
         $remoteCandidate->setPort(1234);
         $remoteCandidate->setType(CandidateType::host);
 
 
         $pair = new RTCIceCandidatePair($protocolMock, $remoteCandidate);
-        $this->assertEquals("CandidatePair(Local Address: 127.0.0.1:1234 -> Remote Address: test.local:1234 | State: FROZEN)", (string)$pair);
+        $this->assertEquals("CandidatePair(Local Address: 127.0.0.1:1234 -> Remote Address: 192.0.2.1:1234 | State: FROZEN)", (string)$pair);
 
         $connection->startCheckBinding($pair);
 
