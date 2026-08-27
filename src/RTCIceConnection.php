@@ -785,7 +785,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function processEarlyChecks(): void
     {
         foreach ($this->earlyChecks as $earlyCheck) {
-            call_user_func_array([$this, 'checkIncoming'], $earlyCheck);
+            $this->checkIncoming(...$earlyCheck);
         }
 
         $this->earlyChecks = [];
