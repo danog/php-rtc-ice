@@ -28,6 +28,7 @@ use Webrtc\ICE\Utils;
  */
 trait NetworkAdapter
 {
+    private ?array $hostAddressCache = null;
     /**
      * Retrieve host addresses from local network interfaces
      *
@@ -48,7 +49,7 @@ trait NetworkAdapter
      */
     public function getHostAddresses(bool $useIPv4, bool $useIPv6): array
     {
-        $hostAddresses = $this->cache["hostAddresses"] ?? $this->getHostFromNetworkAdapter();
+        $hostAddresses = $this->hostAddressCache ?? $this->getHostFromNetworkAdapter();
 
         return $this->filterAddresses($hostAddresses, $useIPv4, $useIPv6);
     }
@@ -85,7 +86,7 @@ trait NetworkAdapter
             }
         }
 
-        $this->cache["hostAddresses"] = $hostAddresses;
+        $this->hostAddressCache = $hostAddresses;
         return $hostAddresses;
     }
 

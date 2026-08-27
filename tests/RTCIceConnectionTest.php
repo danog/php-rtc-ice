@@ -48,6 +48,7 @@ use Webrtc\TURN\TurnTcpConnection;
 use Webrtc\TURN\TurnUdpConnection;
 use function Amp\async;
 use function Amp\delay;
+use function Amp\Future\await;
 
 #[UsesClass(RTCIceProtocolConfiguration::class)]
 #[UsesClass(Utils::class)]
@@ -78,7 +79,95 @@ use function Amp\delay;
 #[CoversClass(RTCIceConnection::class)]
 class RTCIceConnectionTest extends TestCase
 {
+    /** @var resource|null */
+    private static mixed $turnServerProcess = null;
+    private static ?string $turnServerConfig = null;
+    private static ?string $turnServerLog = null;
+    private static ?string $turnServerUnavailableReason = null;
+
     private RTCIceProtocolConfiguration $config;
+
+    public static function setUpBeforeClass(): void
+    {
+        parent::setUpBeforeClass();
+
+        if (self::turnServerIsReady()) {
+            return;
+        }
+
+        $binary = self::findTurnServerBinary();
+        if ($binary === null) {
+            self::$turnServerUnavailableReason = 'The turnserver binary is not installed.';
+            return;
+        }
+
+        $config = file_get_contents(__DIR__ . '/turnconfig/turnserver.conf');
+        if ($config === false) {
+            throw new \RuntimeException('Could not read the Coturn test configuration.');
+        }
+
+        $turnServerConfig = tempnam(sys_get_temp_dir(), 'php-rtc-coturn-');
+        $turnServerLog = tempnam(sys_get_temp_dir(), 'php-rtc-coturn-log-');
+        if ($turnServerConfig === false || $turnServerLog === false) {
+            throw new \RuntimeException('Could not create temporary Coturn test files.');
+        }
+        self::$turnServerConfig = $turnServerConfig;
+        self::$turnServerLog = $turnServerLog;
+
+        $config = preg_replace(
+            ['~^cert=.*$~m', '~^pkey=.*$~m', '~^log-file=.*$~m'],
+            [
+                'cert=' . __DIR__ . '/turnconfig/turnserver.crt',
+                'pkey=' . __DIR__ . '/turnconfig/turnserver.key',
+                'log-file=' . self::$turnServerLog,
+            ],
+            $config,
+        );
+        if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
+            throw new \RuntimeException('Could not write the temporary Coturn test configuration.');
+        }
+
+        self::$turnServerProcess = proc_open(
+            [$binary, '-c', self::$turnServerConfig],
+            [
+                0 => ['pipe', 'r'],
+                1 => ['file', self::$turnServerLog, 'a'],
+                2 => ['file', self::$turnServerLog, 'a'],
+            ],
+            $pipes,
+            dirname(__DIR__),
+        );
+        if (!is_resource(self::$turnServerProcess)) {
+            self::removeTurnServerFiles();
+            throw new \RuntimeException('Could not start Coturn for the test suite.');
+        }
+
+        fclose($pipes[0]);
+
+        $deadline = microtime(true) + 5;
+        do {
+            if (self::turnServerIsReady()) {
+                return;
+            }
+
+            $status = proc_get_status(self::$turnServerProcess);
+            if (!$status['running']) {
+                break;
+            }
+
+            usleep(50_000);
+        } while (microtime(true) < $deadline);
+
+        $log = self::$turnServerLog === null ? '' : (string) @file_get_contents(self::$turnServerLog);
+        self::stopTurnServer();
+        throw new \RuntimeException("Coturn did not become ready.\n" . $log);
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        self::stopTurnServer();
+        parent::tearDownAfterClass();
+    }
 
     protected function setUp(): void
     {
@@ -413,16 +502,6 @@ class RTCIceConnectionTest extends TestCase
             $connection2->close();
         })->ignore();
 
-        // react/async trips an internal assertion resuming the fiber when a task inside
-        // parallel() throws, so the RuntimeException this asserts never reaches the caller
-        // and an AssertionError from SimpleFiber surfaces instead. The failure path is real
-        // and worth asserting; it should start working once this package runs on amphp.
-        if (\PHP_VERSION_ID >= 80000 && \ini_get('zend.assertions') === '1') {
-            $this->markTestSkipped(
-                'react/async loses an exception thrown inside parallel(); re-enable after the amphp port.'
-            );
-        }
-
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('ICE negotiation failed');
         $this->asyncConnect($connection1, $connection2);
@@ -697,6 +776,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServer()
     {
+        $this->requireLocalTurnServer();
+
         $config = clone $this->config;
         $config->setStunServer(['127.0.0.1', 3478]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
@@ -847,6 +928,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithTurnServerTcp()
     {
+        $this->requireLocalTurnServer();
+
         $config = clone $this->config;
         $config->setTurnServer(['127.0.0.1', 3478]);
         $config->setTurnUsername('quasarstream');
@@ -887,6 +970,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithTurnServerUdp()
     {
+        $this->requireLocalTurnServer();
+
         $config = clone $this->config;
         $config->setTurnServer(['127.0.0.1', 3478]);
         $config->setTurnUsername('quasarstream');
@@ -927,7 +1012,7 @@ class RTCIceConnectionTest extends TestCase
     public function testConsentExpired()
     {
         $connection1 = $this->getMockBuilder(RTCIceConnection::class)
-            ->setConstructorArgs([$this->config])
+            ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['periodicConsentCheck'])
             ->getMock();
 
@@ -976,7 +1061,7 @@ class RTCIceConnectionTest extends TestCase
     public function testConsentValid()
     {
         $connection1 = $this->getMockBuilder(RTCIceConnection::class)
-            ->setConstructorArgs([$this->config])
+            ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['periodicConsentCheck'])
             ->getMock();
 
@@ -1122,6 +1207,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testGatherCandidatesRelayOnlyWithStunServer()
     {
+        $this->requireLocalTurnServer();
+
         $config = clone $this->config;
         $config->setStunServer(['127.0.0.1', 3478]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
@@ -1160,6 +1247,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testGatherCandidatesRelayOnlyWithTurnServer()
     {
+        $this->requireLocalTurnServer();
+
         $config = clone $this->config;
         $config->setTurnServer(['127.0.0.1', 3478]);
         $config->setTurnUsername('quasarstream');
@@ -1294,6 +1383,73 @@ class RTCIceConnectionTest extends TestCase
         return false;
     }
 
+    private static function findTurnServerBinary(): ?string
+    {
+        foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $directory) {
+            $binary = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'turnserver';
+            if (is_file($binary) && is_executable($binary)) {
+                return $binary;
+            }
+        }
+
+        return null;
+    }
+
+    private static function turnServerIsReady(): bool
+    {
+        $socket = @stream_socket_client('tcp://127.0.0.1:3478', $errorCode, $errorMessage, .1);
+        if ($socket === false) {
+            return false;
+        }
+
+        fclose($socket);
+        return true;
+    }
+
+    private static function stopTurnServer(): void
+    {
+        if (is_resource(self::$turnServerProcess)) {
+            $status = proc_get_status(self::$turnServerProcess);
+            if ($status['running']) {
+                proc_terminate(self::$turnServerProcess);
+
+                $deadline = microtime(true) + 1;
+                do {
+                    usleep(10_000);
+                    $status = proc_get_status(self::$turnServerProcess);
+                } while ($status['running'] && microtime(true) < $deadline);
+
+                if ($status['running']) {
+                    proc_terminate(self::$turnServerProcess, 9);
+                }
+            }
+
+            proc_close(self::$turnServerProcess);
+            self::$turnServerProcess = null;
+        }
+
+        self::removeTurnServerFiles();
+    }
+
+    private static function removeTurnServerFiles(): void
+    {
+        if (self::$turnServerConfig !== null) {
+            @unlink(self::$turnServerConfig);
+            self::$turnServerConfig = null;
+        }
+        if (self::$turnServerLog !== null) {
+            @unlink(self::$turnServerLog);
+            self::$turnServerLog = null;
+        }
+    }
+
+    private function requireLocalTurnServer(): void
+    {
+        if (!self::turnServerIsReady()) {
+            $this->markTestSkipped(self::$turnServerUnavailableReason ?? 'The test-managed Coturn server is unavailable.');
+        }
+    }
+
     private function assertCandidateTypes(RTCIceConnection $conn, array $expected): void
     {
         $types = array_unique(array_map(fn(RTCIceCandidate $c) => $c->getType()->name, $conn->getLocalCandidates()));
@@ -1351,8 +1507,13 @@ class RTCIceConnectionTest extends TestCase
         // Both agents have to be checking at the same time for the exchange to converge, so
         // each connect() runs in its own fiber and the test waits for both.
         $futures = [async(fn() => $connection1->connect()), async(fn() => $connection2->connect())];
-        foreach ($futures as $future) {
-            $future->await();
+        try {
+            await($futures);
+        } catch (\Throwable $e) {
+            foreach ($futures as $future) {
+                $future->ignore();
+            }
+            throw $e;
         }
     }
 }

@@ -16,6 +16,7 @@ use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
 use Random\RandomException;
 use Amp\DeferredFuture;
+use Amp\Future;
 use Revolt\EventLoop;
 use Throwable;
 use Webrtc\Exception\InvalidArgumentException;
@@ -153,12 +154,11 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var LoggerInterface|null Logger instance */
     private ?LoggerInterface $logger = null;
 
-    /** @var array<string, mixed> Cache for host addresses */
-    private array $cache = [];
+    /** Current binding-check completion, while ICE negotiation is active. */
+    private ?DeferredFuture $bindingCheck = null;
 
-
-    /** @var string|null Handle of the periodic check timer */
-    private ?string $periodicCheck = null;
+    /** Whether checklist progression has already been queued. */
+    private bool $bindingCheckScheduled = false;
 
     /** @var string|null Handle of the consent check timer */
     private ?string $queryConsentTimer = null;
@@ -649,6 +649,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         if ($this->validateRemoteCandidate($remoteCandidate)) {
             $this->remoteCandidates [] = $remoteCandidate;
             $this->createCheckList($remoteCandidate);
+            $this->scheduleBindingCheck();
         }
     }
 
@@ -689,6 +690,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     {
         $this->resetComponentIds();
         $this->remoteCandidatesEnd = true;
+        $this->scheduleBindingCheck();
     }
 
     /**
@@ -733,7 +735,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->processEarlyChecks();
 
         try {
-            $this->bindCheck();
+            $this->bindCheck()->await();
         } catch (Throwable $e) {
             $this->close();
             throw new RuntimeException("ICE negotiation failed: " . $e->getMessage(), $e->getCode(), $e);
@@ -1045,6 +1047,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             if ($pair->getState() === RTCIceCandidatePairStats::SUCCEEDED) {
                 $pair->setNominated(true);
                 $this->completeCheckAction($pair);
+                $this->scheduleBindingCheck();
             }
         }
     }
@@ -1250,6 +1253,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->completeCheckAction($pair);
         $this->tryFailedCount++;
         $this->isBindingWait = false;
+        $this->scheduleBindingCheck();
     }
 
     /**
@@ -1267,55 +1271,97 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->completeCheckAction($pair);
         $this->tryFailedCount = 0; // Reset failure count
         $this->isBindingWait = false;
+        $this->scheduleBindingCheck();
     }
 
     /**
-     * Initiates and manages the periodic binding check process.
+     * Initiates reactive binding-check processing.
      *
-     * Sets up a timer to periodically attempt connectivity checks until
-     * the process succeeds, fails, or times out.
+     * Checklist processing advances in response to candidate and pair state changes.
      *
-     * @return void Returns once a candidate pair has been nominated.
-     * @throws RuntimeException If no pair could be nominated.
+     * @return Future<void> Completes once a candidate pair has been nominated.
      */
-    private function bindCheck(): void
+    private function bindCheck(): Future
     {
-        $deferred = new DeferredFuture();
+        $this->bindingCheck = new DeferredFuture();
+        $future = $this->bindingCheck->getFuture();
+        $this->scheduleBindingCheck();
 
-        $this->periodicCheck = EventLoop::repeat(0.02, function () use ($deferred): void {
-            if ($this->isBindingWait) {
-                return;
-            }
+        return $future;
+    }
 
-            $this->isBindingWait = true;
+    /**
+     * Queues checklist progression once, coalescing simultaneous state changes.
+     */
+    private function scheduleBindingCheck(): void
+    {
+        if ($this->bindingCheck === null || $this->bindingCheckScheduled) {
+            return;
+        }
 
-            // The check blocks on STUN transactions, and a repeat callback that suspends is
-            // not re-entered until it returns. Running it inline would therefore stop the
-            // ticks that retry the remaining pairs, and a first pair that needs a retry would
-            // wedge the whole exchange. The isBindingWait flag still keeps one check in
-            // flight at a time.
-            async(function () use ($deferred): void {
-                $completed = (isset($this->checkListState) && $this->checkListState === CheckListState::ICE_COMPLETED)
-                    || $this->tryCheckBinding();
-
-                if ($this->periodicCheck === null) {
-                    // Another tick already settled the outcome.
-                    return;
-                }
-
-                if ($completed) {
-                    EventLoop::cancel($this->periodicCheck);
-                    $this->periodicCheck = null;
-                    $deferred->complete(true);
-                } elseif ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED) || $this->tryFailedCount > self::RETRY_BINDING_MAX) {
-                    EventLoop::cancel($this->periodicCheck);
-                    $this->periodicCheck = null;
-                    $deferred->error(new RuntimeException("Binding check failed"));
-                }
-            })->ignore();
+        $this->bindingCheckScheduled = true;
+        EventLoop::queue(function (): void {
+            $this->bindingCheckScheduled = false;
+            $this->advanceBindingCheck();
         });
+    }
 
-        $deferred->getFuture()->await();
+    /**
+     * Advances the checklist until a check is in flight or negotiation settles.
+     */
+    private function advanceBindingCheck(): void
+    {
+        if ($this->bindingCheck === null) {
+            return;
+        }
+
+        if (isset($this->checkListState) && $this->checkListState === CheckListState::ICE_COMPLETED) {
+            $this->settleBindingCheck();
+            return;
+        }
+
+        if ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED)
+            || $this->tryFailedCount > self::RETRY_BINDING_MAX
+        ) {
+            $this->settleBindingCheck(new RuntimeException("Binding check failed"));
+            return;
+        }
+
+        if ($this->isBindingWait) {
+            return;
+        }
+
+        $this->isBindingWait = true;
+        if ($this->tryCheckBinding()) {
+            $this->settleBindingCheck();
+            return;
+        }
+
+        if ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED)
+            || $this->tryFailedCount > self::RETRY_BINDING_MAX
+        ) {
+            $this->settleBindingCheck(new RuntimeException("Binding check failed"));
+        }
+    }
+
+    /**
+     * Completes the active binding check exactly once.
+     */
+    private function settleBindingCheck(?Throwable $error = null): void
+    {
+        $bindingCheck = $this->bindingCheck;
+        if ($bindingCheck === null) {
+            return;
+        }
+
+        $this->bindingCheck = null;
+        $this->isBindingWait = false;
+
+        if ($error === null) {
+            $bindingCheck->complete();
+        } else {
+            $bindingCheck->error($error);
+        }
     }
 
     /**
@@ -1338,17 +1384,20 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->isBindingWait = false;
 
         if (empty($this->checkList)) {
-            $this->tryFailedCount = self::RETRY_BINDING_MAX + 1;
+            if ($this->remoteCandidatesEnd) {
+                $this->tryFailedCount = self::RETRY_BINDING_MAX + 1;
+            }
             return false;
         }
 
-        // Nothing is waiting or frozen, so no pair will fail again and push this count any
-        // higher. If no further remote candidates can arrive either, no new pair will ever
-        // appear, and leaving the count *at* the ceiling rather than past it makes the
-        // periodic check spin forever on a list that can no longer change.
-        $this->tryFailedCount = $this->remoteCandidatesEnd
-            ? self::RETRY_BINDING_MAX + 1
-            : self::RETRY_BINDING_MAX;
+        // A controlled agent with a valid pair waits reactively for USE-CANDIDATE.
+        if ($this->isControlledRole() && $this->hasAnySucceededPair()) {
+            return false;
+        }
+
+        if ($this->remoteCandidatesEnd) {
+            $this->tryFailedCount = self::RETRY_BINDING_MAX + 1;
+        }
 
         return $this->remoteCandidatesEnd && $this->checkListDone;
     }
@@ -1618,9 +1667,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->clearResources();
         $this->emit('onClose');
         $this->removeAllListeners();
-        if ($this->periodicCheck) {
-            EventLoop::cancel($this->periodicCheck);
-        }
+        $this->settleBindingCheck(new RuntimeException("Binding check failed"));
 
         if (!$this->closed) {
             $this->closed = true;
@@ -1810,7 +1857,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         if ($this->isControllingRole() && $attributes->has(MessageAttribute::ICE_CONTROLLING)) {
             $this->logger?->info("Role conflict detected: expected controlling role.");
-            if (($this->tieBreaker ^ PHP_INT_MIN) >= ($attributes->get(MessageAttribute::ICE_CONTROLLING) ^ PHP_INT_MIN)) {
+            if ($this->compareTieBreaker($attributes->get(MessageAttribute::ICE_CONTROLLING)) >= 0) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -1819,7 +1866,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $this->setRole(IceRole::Controlled);
         } elseif ($this->isControlledRole() && $attributes->has(MessageAttribute::ICE_CONTROLLED)) {
             $this->logger?->info("Role conflict detected: expected controlled role.");
-            if (($this->tieBreaker ^ PHP_INT_MIN) < ($attributes->get(MessageAttribute::ICE_CONTROLLED) ^ PHP_INT_MIN)) {
+            if ($this->compareTieBreaker($attributes->get(MessageAttribute::ICE_CONTROLLED)) < 0) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -1829,6 +1876,11 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         }
 
         return false;
+    }
+
+    private function compareTieBreaker(int $remoteTieBreaker): int
+    {
+        return ($this->tieBreaker ^ PHP_INT_MIN) <=> ($remoteTieBreaker ^ PHP_INT_MIN);
     }
 
     /**
@@ -2006,6 +2058,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     public function setRemoteCandidatesEnd(bool $remoteCandidatesEnd): void
     {
         $this->remoteCandidatesEnd = $remoteCandidatesEnd;
+        $this->scheduleBindingCheck();
     }
 
     /**

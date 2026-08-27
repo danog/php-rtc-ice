@@ -25,34 +25,13 @@ jobs:
       - name: Install dependencies
         run: composer install
 
-      - name: Install and configure Coturn
+      - name: Install Coturn
         run: |
           sudo apt-get update
           sudo apt-get install -y coturn
-          
-          # Stop any running Coturn service first
+
+          # The PHPUnit suite owns the Coturn process and its lifecycle.
           sudo systemctl stop coturn || true
-          
-          # Create directories and copy files
-          sudo mkdir -p /etc/turnserver
-          sudo cp tests/turnconfig/turnserver.conf /etc/turnserver/
-          sudo cp tests/turnconfig/turnserver.crt /etc/turnserver/
-          sudo cp tests/turnconfig/turnserver.key /etc/turnserver/
-          
-          # Create log directory
-          sudo mkdir -p /var/log/
-          sudo touch /var/log/turnserver.log
-          sudo chmod 666 /var/log/turnserver.log
-          
-          # Start Coturn with our custom config
-          sudo turnserver -c /etc/turnserver/turnserver.conf -v &
-          
-          # Wait for server to start
-          sleep 5
-          
-          # Verify server is running
-          ps aux | grep turnserver
-          netstat -tulnp | grep -E '3478|5349'
 
       - name: Run PHPUnit tests
         run: vendor/bin/phpunit
