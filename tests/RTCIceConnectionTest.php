@@ -4,8 +4,10 @@ namespace Tests\Webrtc\ICE;
 
 use Amp\Socket\InternetAddress;
 use Mockery;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use PHPUnit\Framework\Attributes\UsesTrait;
 use PHPUnit\Framework\TestCase;
 use Random\RandomException;
 use ReflectionMethod;
@@ -57,17 +59,17 @@ use function Amp\Future\await;
 #[UsesClass(MulticastExecutor::class)]
 #[UsesClass(Datagram::class)]
 #[UsesClass(Message::class)]
+#[UsesClass(MessageAttribute::class)]
 #[UsesClass(MessageAttributeCollection::class)]
 #[UsesClass(MessageAttributeEncoder::class)]
 #[UsesClass(MessageIntegrity::class)]
 #[UsesClass(Stun::class)]
-#[UsesClass(CandidateSetterGetter::class)]
-#[UsesClass(EventForwarder::class)]
-#[UsesClass(Request::class)]
+#[UsesTrait(CandidateSetterGetter::class)]
+#[UsesTrait(EventForwarder::class)]
+#[UsesTrait(Request::class)]
 #[UsesClass(Transaction::class)]
 #[UsesClass(\Webrtc\STUN\Utils::class)]
-#[UsesClass(Transaction::class)]
-#[UsesClass(TurnConnection::class)]
+#[UsesTrait(TurnConnection::class)]
 #[UsesClass(TurnUdpConnection::class)]
 #[UsesClass(TransactionException::class)]
 #[UsesClass(TransactionTimeoutException::class)]
@@ -182,6 +184,7 @@ class RTCIceConnectionTest extends TestCase
 
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testGetHostAddresses()
     {
         $connectionMock = $this->getMockBuilder(RTCIceConnection::class)
@@ -476,6 +479,7 @@ class RTCIceConnectionTest extends TestCase
         $connection2->close();
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testConnectToIceLiteNominationFails()
     {
         $connection1 = $this->getIceConnection();
@@ -737,6 +741,7 @@ class RTCIceConnectionTest extends TestCase
         $connection2->close();
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testConnectTimeout()
     {
         $connection = $this->getMockBuilder(RTCIceConnection::class)
@@ -1010,6 +1015,7 @@ class RTCIceConnectionTest extends TestCase
         $connection2->close();
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testConsentExpired()
     {
         $connection1 = $this->getMockBuilder(RTCIceConnection::class)
@@ -1059,6 +1065,7 @@ class RTCIceConnectionTest extends TestCase
         $connection1->close();
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testConsentValid()
     {
         $connection1 = $this->getMockBuilder(RTCIceConnection::class)

@@ -1,11 +1,11 @@
 <?php
 
 
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use PHPUnit\Framework\Attributes\UsesTrait;
 use PHPUnit\Framework\TestCase;
-use Webrtc\DTLS\RTCDtlsTransport;
-use Webrtc\DTLS\TLS\Handshake;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\CandidateType;
 use Webrtc\ICE\Enum\IceRole;
@@ -26,11 +26,9 @@ use Webrtc\ICE\Utils;
 use Webrtc\RTP\Receiver\RTCRtpReceiver;
 use Webrtc\RTP\RTCRtpTransceiver;
 use Webrtc\RTP\Sender\RTCRtpSender;
-use Webrtc\SSL\Crypto\EC\EC;
-use Webrtc\SSL\Crypto\X509;
-use Webrtc\SSL\SSL\SSL;
 use Webrtc\STUN\BaseProtocol;
 use Webrtc\STUN\Datagram;
+use Webrtc\STUN\Enum\MessageAttribute;
 use Webrtc\STUN\Exception\TransactionException;
 use Webrtc\STUN\Exception\TransactionTimeoutException;
 use Webrtc\STUN\Message\Message;
@@ -51,8 +49,10 @@ use function Amp\delay;
 #[UsesClass(RTCIceGatherer::class)]
 #[UsesClass(RTCIceParameters::class)]
 #[UsesClass(RTCIceProtocolConfiguration::class)]
-#[UsesClass(Mdns::class)]
-#[UsesClass(NetworkAdapter::class)]
+#[UsesClass(RTCICESetting::class)]
+#[UsesClass(MessageAttribute::class)]
+#[UsesTrait(Mdns::class)]
+#[UsesTrait(NetworkAdapter::class)]
 #[UsesClass(Utils::class)]
 #[UsesClass(BaseProtocol::class)]
 #[UsesClass(Datagram::class)]
@@ -66,15 +66,10 @@ use function Amp\delay;
 #[UsesClass(TurnTcpConnection::class)]
 #[UsesClass(TransactionException::class)]
 #[UsesClass(TransactionTimeoutException::class)]
-#[UsesClass(RTCDtlsTransport::class)]
 #[UsesClass(RTCRtpTransceiver::class)]
 #[UsesClass(RTCRtpReceiver::class)]
 #[UsesClass(RTCRtpSender::class)]
-#[UsesClass(EC::class)]
-#[UsesClass(X509::class)]
 #[UsesClass(RTCPeerConnection::class)]
-#[UsesClass(Handshake::class)]
-#[UsesClass(SSL::class)]
 #[CoversClass(RTCIceTransport::class)]
 class RTCIceTransportTest extends TestCase
 {
@@ -229,6 +224,7 @@ class RTCIceTransportTest extends TestCase
         $transport->start(new RTCIceParameters(usernameFragment: 'foo', password: 'bar'));
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testConnectionClosed()
     {
         $gatherer = new RTCIceGatherer([]);

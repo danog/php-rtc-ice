@@ -4,12 +4,14 @@ namespace Tests\Webrtc\ICE;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use PHPUnit\Framework\Attributes\UsesTrait;
 use Webrtc\ICE\Enum\IceGatheringState;
 use Webrtc\ICE\IceProtocolParser;
 use Webrtc\ICE\RTCIceCandidate;
 use Webrtc\ICE\RTCIceConnection;
 use Webrtc\ICE\RTCIceGatherer;
 use PHPUnit\Framework\TestCase;
+use Webrtc\ICE\RTCICESetting;
 use Webrtc\ICE\RTCIceProtocolConfiguration;
 use Webrtc\ICE\RTCIceServer;
 use Webrtc\ICE\Trait\NetworkAdapter;
@@ -23,13 +25,14 @@ use Webrtc\TURN\TCPConnection;
 #[UsesClass(RTCIceCandidate::class)]
 #[UsesClass(RTCIceConnection::class)]
 #[UsesClass(RTCIceProtocolConfiguration::class)]
-#[UsesClass(NetworkAdapter::class)]
+#[UsesTrait(NetworkAdapter::class)]
 #[UsesClass(Utils::class)]
 #[UsesClass(BaseProtocol::class)]
 #[UsesClass(Datagram::class)]
 #[UsesClass(Stun::class)]
 #[UsesClass(TCPConnection::class)]
 #[UsesClass(RTCIceServer::class)]
+#[UsesClass(RTCICESetting::class)]
 #[CoversClass(RTCIceGatherer::class)]
 class RTCIceGathererTest extends TestCase
 {
