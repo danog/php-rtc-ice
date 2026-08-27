@@ -53,5 +53,5 @@
             "Tests\\Webrtc\\ICE\\": "tests"
         }
     },
-    "minimum-stability": "dev"
+    "minimum-stability": "stable"
 }
