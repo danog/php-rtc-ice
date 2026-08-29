@@ -30,6 +30,7 @@ use Webrtc\ICE\Enum\TransportType;
  * - Follows RFC 8445 (ICE) specifications
  *
  * @see https://datatracker.ietf.org/doc/html/rfc8445 ICE RFC 8445
+ * @api
  */
 class RTCIceCandidate
 {
@@ -54,6 +55,12 @@ class RTCIceCandidate
      */
     public function __construct(private readonly int $componentId)
     {
+        $this->protocolId = '';
+        $this->host = '';
+        $this->port = 0;
+        $this->type = CandidateType::host;
+        $this->priority = null;
+        $this->foundation = null;
     }
 
     /**
@@ -295,9 +302,9 @@ class RTCIceCandidate
             throw new InvalidArgumentException("SDP does not have enough properties");
         }
 
-        $candidate = new static((int)$sdpParts[1]);
+        $candidate = new self((int)$sdpParts[1]);
         $candidate->setFoundation($sdpParts[0] ?? null);
-        $candidate->setPriority($sdpParts[3] ?? null);
+        $candidate->setPriority((int)$sdpParts[3]);
         $candidate->setTransport(match (strtolower($sdpParts[2])) {
             'udp' => TransportType::udp,
             'tcp' => TransportType::tcp,
@@ -444,8 +451,10 @@ class RTCIceCandidate
         ?string $tcpType = null,
         ?string $generation = null
     ): self {
-        $candidate = new static($componentId);
-        $candidate->setProtocolId($protocolId);
+        $candidate = new self($componentId);
+        if ($protocolId !== null) {
+            $candidate->setProtocolId($protocolId);
+        }
         $candidate->setHost($host);
         $candidate->setPort($port);
         $candidate->setType($type);
@@ -453,7 +462,7 @@ class RTCIceCandidate
         $candidate->setRelatedAddress($relatedAddress);
         $candidate->setRelatedPort($relatedPort);
         $candidate->setTcpType($tcpType);
-        $candidate->setGeneration($generation);
+        $candidate->setGeneration($generation !== null ? (int)$generation : null);
 
         return $candidate;
     }

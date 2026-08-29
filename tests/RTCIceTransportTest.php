@@ -23,22 +23,6 @@ use Webrtc\ICE\RTCIceTransport;
 use Webrtc\ICE\Trait\Mdns;
 use Webrtc\ICE\Trait\NetworkAdapter;
 use Webrtc\ICE\Utils;
-use Webrtc\RTP\Receiver\RTCRtpReceiver;
-use Webrtc\RTP\RTCRtpTransceiver;
-use Webrtc\RTP\Sender\RTCRtpSender;
-use Webrtc\STUN\BaseProtocol;
-use Webrtc\STUN\Datagram;
-use Webrtc\STUN\Enum\MessageAttribute;
-use Webrtc\STUN\Exception\TransactionException;
-use Webrtc\STUN\Exception\TransactionTimeoutException;
-use Webrtc\STUN\Message\Message;
-use Webrtc\STUN\Message\MessageAttributeCollection;
-use Webrtc\STUN\Message\MessageAttributeEncoder;
-use Webrtc\STUN\Message\MessageIntegrity;
-use Webrtc\STUN\Stun;
-use Webrtc\STUN\Transaction;
-use Webrtc\TURN\TurnTcpConnection;
-use Webrtc\Webrtc\RTCPeerConnection;
 use function Amp\async;
 use function Amp\delay;
 
@@ -50,26 +34,9 @@ use function Amp\delay;
 #[UsesClass(RTCIceParameters::class)]
 #[UsesClass(RTCIceProtocolConfiguration::class)]
 #[UsesClass(RTCICESetting::class)]
-#[UsesClass(MessageAttribute::class)]
 #[UsesTrait(Mdns::class)]
 #[UsesTrait(NetworkAdapter::class)]
 #[UsesClass(Utils::class)]
-#[UsesClass(BaseProtocol::class)]
-#[UsesClass(Datagram::class)]
-#[UsesClass(Message::class)]
-#[UsesClass(MessageAttributeCollection::class)]
-#[UsesClass(MessageAttributeEncoder::class)]
-#[UsesClass(MessageIntegrity::class)]
-#[UsesClass(Stun::class)]
-#[UsesClass(Transaction::class)]
-#[UsesClass(\Webrtc\STUN\Utils::class)]
-#[UsesClass(TurnTcpConnection::class)]
-#[UsesClass(TransactionException::class)]
-#[UsesClass(TransactionTimeoutException::class)]
-#[UsesClass(RTCRtpTransceiver::class)]
-#[UsesClass(RTCRtpReceiver::class)]
-#[UsesClass(RTCRtpSender::class)]
-#[UsesClass(RTCPeerConnection::class)]
 #[CoversClass(RTCIceTransport::class)]
 class RTCIceTransportTest extends TestCase
 {

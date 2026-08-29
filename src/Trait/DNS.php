@@ -11,7 +11,9 @@
 
 namespace Webrtc\ICE\Trait;
 
+use Amp\Dns\DnsRecord;
 use Throwable;
+use Webrtc\Exception\InvalidArgumentException;
 use function Amp\Dns\resolve;
 
 /**
@@ -42,7 +44,7 @@ trait DNS
      *                       - A domain name (e.g., 'example.com')
      *                       - An IP address (IPv4 or IPv6)
      *
-     * @return array Returns an array in the format [resolved_ip, original_port]
+     * @return array{0: string, 1: int<0, 65535>} Returns an array in the format [resolved_ip, original_port]
      *
      * @throws Throwable If DNS resolution fails or encounters an error
      *
@@ -57,14 +59,30 @@ trait DNS
      */
     private function resolveDNS(array $address): array
     {
-        if (filter_var($address[0], FILTER_VALIDATE_IP)) {
-            return $address;
+        $host = $address[0] ?? null;
+        $port = $address[1] ?? null;
+
+        if (!is_string($host) || $host === '') {
+            throw new InvalidArgumentException("Invalid STUN/DNS host given: " . (is_scalar($host) ? (string)$host : gettype($host)));
+        }
+
+        if (!is_int($port) || $port < 0 || $port > 65535) {
+            throw new InvalidArgumentException("Invalid STUN/DNS port given: " . (is_scalar($port) ? (string)$port : gettype($port)));
+        }
+
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return [$host, $port];
         }
 
         // The system resolver already caches and falls back, so there is nothing to configure
         // here; the first A or AAAA record is what the candidate needs.
-        $records = resolve($address[0]);
+        /** @var list<DnsRecord> $records */
+        $records = resolve($host);
 
-        return [$records[0]->getValue(), $address[1]];
+        if (!isset($records[0])) {
+            throw new \RuntimeException("No DNS records found for {$host}");
+        }
+
+        return [$records[0]->getValue(), $port];
     }
 }

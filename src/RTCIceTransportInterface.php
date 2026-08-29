@@ -17,7 +17,7 @@ use Webrtc\ICE\Enum\IceRole;
 
 interface RTCIceTransportInterface extends EventEmitterInterface
 {
-    public function send(string $bytes);
+    public function send(string $bytes): void;
 
     public function getRole(): IceRole;
 

@@ -12,6 +12,7 @@
 namespace Webrtc\ICE;
 
 use Evenement\EventEmitter;
+use Override;
 use Psr\Log\LoggerInterface;
 use Throwable;
 use Webrtc\Exception\InvalidArgumentException;
@@ -25,7 +26,7 @@ use Webrtc\Mixin\EventForwarder;
  * Handles ICE transport functionality including connection state,
  * sending data, and reacting to events emitted by the ICE connection.
  */
-class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
+final class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
 {
     use EventForwarder;
 
@@ -54,9 +55,11 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
         private readonly RTCIceGathererInterface $iceGatherer,
         private readonly ?LoggerInterface $logger = null
     ) {
-        $this->iceConnection = $iceGatherer->getIceConnection();
-        $this->forwardEvents($this->iceConnection, ["data"]);
-        $this->forwardEvents2Methods($this->iceConnection, ["onClose" => 'failure']);
+        /** @var RTCIceConnection $iceConnection */
+        $iceConnection = $iceGatherer->getIceConnection();
+        $this->iceConnection = $iceConnection;
+        $this->forwardEvents($iceConnection, ["data"]);
+        $this->forwardEvents2Methods($iceConnection, ["onClose" => 'failure']);
     }
 
     /**
@@ -64,6 +67,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      *
      * @return RTCIceGathererInterface
      */
+    #[\Override]
     public function getIceGatherer(): RTCIceGathererInterface
     {
         return $this->iceGatherer;
@@ -74,6 +78,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      *
      * @return IceRole
      */
+    #[\Override]
     public function getRole(): IceRole
     {
         return $this->iceConnection->getIceRole();
@@ -95,6 +100,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      * @param RTCIceCandidate $candidate
      * @return void
      */
+    #[\Override]
     public function addRemoteCandidate(RTCIceCandidate $candidate): void
     {
         if (!$this->iceConnection->isRemoteCandidatesEnd()) {
@@ -119,6 +125,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      * @return void Returns once the transport has finished checking.
      * @throws InvalidArgumentException If the transport is already closed.
      */
+    #[\Override]
     public function start(RTCIceParameters $remoteIceParameters): void
     {
         if ($this->state === IceTransportState::closed) {
@@ -144,6 +151,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      *
      * @return void
      */
+    #[\Override]
     public function stop(): void
     {
         if ($this->state === IceTransportState::closed) {
@@ -192,7 +200,9 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
             $this->emit("statechange", [$state]);
 
             if ($state === IceTransportState::closed) {
-                $this->iceGatherer->removeAllListeners();
+                if ($this->iceGatherer instanceof EventEmitter) {
+                    $this->iceGatherer->removeAllListeners();
+                }
                 $this->removeAllListeners();
             }
         }
@@ -203,6 +213,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      *
      * @return RTCIceConnectionInterface
      */
+    #[\Override]
     public function getIceConnection(): RTCIceConnectionInterface
     {
         return $this->iceConnection;
@@ -214,6 +225,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      * @param string $bytes
      * @return void
      */
+    #[\Override]
     public function send(string $bytes): void
     {
         $this->iceConnection->sendData($bytes);
@@ -234,6 +246,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      *
      * @return bool
      */
+    #[\Override]
     public function isRoleSet(): bool
     {
         return $this->roleSet;
@@ -245,6 +258,7 @@ class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
      * @param bool $roleSet
      * @return void
      */
+    #[\Override]
     public function setRoleSet(bool $roleSet): void
     {
         $this->roleSet = $roleSet;

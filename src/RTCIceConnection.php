@@ -12,6 +12,7 @@
 namespace Webrtc\ICE;
 
 use Evenement\EventEmitter;
+use Override;
 use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
 use Random\RandomException;
@@ -34,6 +35,7 @@ use Webrtc\ICE\Trait\NetworkAdapter;
 use Webrtc\STUN\Enum\MessageAttribute;
 use Webrtc\STUN\Enum\MessageClass;
 use Webrtc\STUN\Enum\MessageMethod;
+use Webrtc\STUN\Exception\TransactionException;
 use Webrtc\STUN\Exception\TransactionExceptionInterface;
 use Webrtc\STUN\IceConnectionProtocolInterface;
 use Webrtc\STUN\Message\Message;
@@ -62,6 +64,7 @@ use function Amp\async;
  *
  * @see https://datatracker.ietf.org/doc/html/rfc8445 ICE RFC 8445
  * @see https://www.rfc-editor.org/rfc/rfc7675 Consent Freshness RFC 7675
+ * @api
  */
 class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface, ReceiverInterface
 {
@@ -101,7 +104,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var RTCIceCandidatePair[] List of candidate pairs to check */
     private array $checkList = [];
 
-    /** @var array Early checks received before checklist creation */
+    /** @var array<array-key, array{0: MessageInterface, 1: InternetAddress, 2: IceConnectionProtocolInterface}> Early checks received before checklist creation */
     private array $earlyChecks = [];
 
     /** @var RTCIceCandidate[] Local ICE candidates */
@@ -113,7 +116,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var array<int> Components being nominated */
     private array $nominating = [];
 
-    /** @var Stun[]|Turn[] Protocol instances */
+    /** @var array<array-key, StunInterface|TurnInterface> Protocol instances */
     private array $protocols = [];
 
     /** @var RTCIceCandidate[] Remote ICE candidates */
@@ -146,8 +149,8 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var bool Whether local candidate gathering has started */
     private bool $localCandidatesStart = false;
 
-    /** @var CheckListState Current state of the checklist */
-    private CheckListState $checkListState;
+    /** @var CheckListState|null Current state of the checklist */
+    private ?CheckListState $checkListState = null;
 
     /** @var TransportPolicyType Transport policy (all, relay, etc.) */
     private TransportPolicyType $transportPolicy = TransportPolicyType::ALL;
@@ -155,7 +158,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var LoggerInterface|null Logger instance */
     private ?LoggerInterface $logger = null;
 
-    /** Current binding-check completion, while ICE negotiation is active. */
+    /** @var DeferredFuture<void>|null Current binding-check completion, while ICE negotiation is active. */
     private ?DeferredFuture $bindingCheck = null;
 
     /** Whether checklist progression has already been queued. */
@@ -174,7 +177,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private ?array $icePortRange = null;
 
     /**
-     * @var ?array If set, this will result in all host candidates (which normally have a private IP address)
+     * @var array<int, string>|null If set, this will result in all host candidates (which normally have a private IP address)
      * to be rewritten with the public address provided in the settings
      */
     private ?array $nat1to1 = null;
@@ -197,6 +200,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return bool
      */
+    #[Override]
     public function isUseIPv4(): bool
     {
         return $this->useIPv4;
@@ -206,6 +210,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param bool $useIPv4
      * @return void
      */
+    #[Override]
     public function setUseIPv4(bool $useIPv4): void
     {
         $this->useIPv4 = $useIPv4;
@@ -214,6 +219,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return bool
      */
+    #[Override]
     public function isUseIPv6(): bool
     {
         return $this->useIPv6;
@@ -223,6 +229,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param bool $useIPv6
      * @return void
      */
+    #[Override]
     public function setUseIPv6(bool $useIPv6): void
     {
         $this->useIPv6 = $useIPv6;
@@ -231,6 +238,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return string
      */
+    #[Override]
     public function getLocalUsername(): string
     {
         return $this->localUsername;
@@ -240,6 +248,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param string $localUsername
      * @return void
      */
+    #[Override]
     public function setLocalUsername(string $localUsername): void
     {
         $this->localUsername = $localUsername;
@@ -248,6 +257,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return string
      */
+    #[Override]
     public function getLocalPassword(): string
     {
         return $this->localPassword;
@@ -257,6 +267,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param string $localPassword
      * @return void
      */
+    #[Override]
     public function setLocalPassword(string $localPassword): void
     {
         $this->localPassword = $localPassword;
@@ -265,15 +276,17 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return RTCIceCandidate[]
      */
+    #[Override]
     public function getLocalCandidates(): array
     {
         return $this->localCandidates;
     }
 
     /**
-     * @param array $localCandidates
+     * @param RTCIceCandidate[] $localCandidates
      * @return void
      */
+    #[Override]
     public function setLocalCandidates(array $localCandidates): void
     {
         $this->localCandidates = $localCandidates;
@@ -282,15 +295,17 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return RTCIceCandidate[]
      */
+    #[Override]
     public function getRemoteCandidates(): array
     {
         return $this->remoteCandidates;
     }
 
     /**
-     * @param array $remoteCandidates
+     * @param RTCIceCandidate[] $remoteCandidates
      * @return void
      */
+    #[Override]
     public function setRemoteCandidates(array $remoteCandidates): void
     {
         $this->remoteCandidates = $remoteCandidates;
@@ -299,6 +314,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return string|null
      */
+    #[Override]
     public function getRemoteUsername(): ?string
     {
         return $this->remoteUsername;
@@ -308,6 +324,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param string|null $remoteUsername
      * @return void
      */
+    #[Override]
     public function setRemoteUsername(?string $remoteUsername): void
     {
         $this->remoteUsername = $remoteUsername;
@@ -316,6 +333,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return string|null
      */
+    #[Override]
     public function getRemotePassword(): ?string
     {
         return $this->remotePassword;
@@ -325,23 +343,26 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param string|null $remotePassword
      * @return void
      */
+    #[Override]
     public function setRemotePassword(?string $remotePassword): void
     {
         $this->remotePassword = $remotePassword;
     }
 
     /**
-     * @return array
+     * @return array<int>
      */
+    #[Override]
     public function getComponentIds(): array
     {
         return $this->componentIds;
     }
 
     /**
-     * @param array $componentIds
+     * @param array<int> $componentIds
      * @return void
      */
+    #[Override]
     public function setComponentIds(array $componentIds): void
     {
         $this->componentIds = $componentIds;
@@ -350,6 +371,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /**
      * @return bool
      */
+    #[Override]
     public function isRemoteIsLite(): bool
     {
         return $this->remoteIsLite;
@@ -359,6 +381,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param bool $remoteIsLite
      * @return void
      */
+    #[Override]
     public function setRemoteIsLite(bool $remoteIsLite): void
     {
         $this->remoteIsLite = $remoteIsLite;
@@ -383,6 +406,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @throws Throwable If candidate gathering fails
      * @see https://datatracker.ietf.org/doc/html/rfc8445#section-2.1
      */
+    #[Override]
     public function gatherCandidates(): void
     {
         if (!$this->localCandidatesStart) {
@@ -402,7 +426,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * and relayed candidates (from TURN servers) based on the current configuration.
      *
      * @param int $componentId The component ID to gather candidates for
-     * @return array An array of RTCIceCandidate objects
+     * @return RTCIceCandidate[] An array of RTCIceCandidate objects
      * @throws RandomException If there's an error in random generation
      * @throws Throwable For any other exceptions that might occur during candidate gathering
      */
@@ -413,12 +437,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $candidates = $this->getHostCandidates($componentId);
 
         // Query the STUN server for IPv4 server-reflexive candidates and get STUN candidates.
-        if ($this->configuration->getStunServer()) {
+        if ($this->configuration->getStunServer() !== null) {
             $candidates = array_merge($candidates, $this->getServerReflexiveCandidates($componentId));
         }
 
         // Connect to TURN server, get relayed candidate and return candidates
-        if ($this->configuration->getTurnServer()) {
+        if ($this->configuration->getTurnServer() !== null) {
             if ($turn = $this->getRelayedCandidate()) {
                 $candidate = $candidates [] = $this->getTurnCandidate($turn, $componentId);
                 $turn->setCandidate($candidate);
@@ -437,7 +461,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * policy is set to 'all'.
      *
      * @param int $componentId The component ID to create candidates for
-     * @return array An array of host RTCIceCandidate objects
+     * @return RTCIceCandidate[] An array of host RTCIceCandidate objects
      * @throws Throwable For any exceptions that might occur during candidate creation
      */
     private function getHostCandidates(int $componentId): array
@@ -466,7 +490,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * candidates for IPv4 addresses by contacting the configured STUN server.
      *
      * @param int $componentId The component ID to create candidates for
-     * @return array An array of server-reflexive RTCIceCandidate objects
+     * @return RTCIceCandidate[] An array of server-reflexive RTCIceCandidate objects
      * @throws RandomException If there's an error in random generation
      * @throws Throwable For any other exceptions during candidate discovery
      */
@@ -475,7 +499,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $candidates = [];
 
         foreach ($this->protocols as $protocol) {
-            if (Utils::IPVersion($protocol->getLocalHost()) === 4) {
+            if ($protocol instanceof Stun && Utils::IPVersion($protocol->getLocalHost()) === 4) {
                 if ($candidate = $this->getServerReflexiveCandidate($protocol, $componentId)) {
                     $candidates [] = $candidate;
                     $protocol->setCandidate($candidate);
@@ -501,15 +525,21 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function getServerReflexiveCandidate(StunInterface $stun, int $componentId): RTCIceCandidate|false
     {
+        $stunServer = $this->configuration->getStunServer();
+        if ($stunServer === null || $stunServer === []) {
+            return false;
+        }
+        /** @var array{0: string, 1: int<0, 65535>} $stunServer */
         $message = Message::new(MessageClass::REQUEST, MessageMethod::BINDING);
         try {
-            $stunServerIp = $this->resolveDNS($this->configuration->getStunServer());
-            [$response,] = $stun->request($message, new InternetAddress($stunServerIp[0], $stunServerIp[1]));
-            $address = $response->attributes()->get(MessageAttribute::XOR_MAPPED_ADDRESS);
+            $stunServerIp = $this->resolveDNS($stunServer);
+            [$response,] = $stun->request($message, new InternetAddress($stunServerIp[0], $stunServerIp[1]), null);
+            /** @var InternetAddress $mappedAddress */
+            $mappedAddress = $response->attributes()->get(MessageAttribute::XOR_MAPPED_ADDRESS);
 
-            return $this->createCandidate($stun->getId(), $address->getAddress(), $address->getPort(), $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
+            return $this->createCandidate($stun->getId(), $mappedAddress->getAddress(), $mappedAddress->getPort(), $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
         } catch (Throwable $e) {
-            $this->logger?->error(sprintf("Could not request stun server: %s - %s", $e->getMessage(), implode(":", $this->configuration->getStunServer())));
+            $this->logger?->error(sprintf("Could not request stun server: %s - %s", $e->getMessage(), implode(":", $stunServer)));
             $stun->close();
             return false;
         }
@@ -521,20 +551,26 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * Creates and connects to a TURN server using the configured credentials
      * and settings.
      *
-     * @return TurnInterface|false A TURN interface if successful, false otherwise
+     * @return Turn|false A TURN interface if successful, false otherwise
      * @throws Throwable For any other exceptions during TURN server connection
      */
-    private function getRelayedCandidate(): TurnInterface|false
+    private function getRelayedCandidate(): Turn|false
     {
+        $turnServer = $this->configuration->getTurnServer();
+        if ($turnServer === null) {
+            return false;
+        }
+        /** @var array{0: string, 1: int<0, 65535>} $turnServer */
+
         try {
             $configuration = clone $this->configuration;
-            $configuration->setTurnServer($this->resolveDNS($this->configuration->getTurnServer()));
+            $configuration->setTurnServer($this->resolveDNS($turnServer));
 
             $turn = Turn::create($configuration, $this, $this->logger);
             $turn->connect();
             return $turn;
         } catch (Throwable $e) {
-            $this->logger?->error("Couldn't connect to Turn server {$e->getMessage()}", ["TurnServer" => $this->configuration->getTurnServer()]);
+            $this->logger?->error("Couldn't connect to Turn server {$e->getMessage()}", ["TurnServer" => $turnServer]);
             return false;
         }
     }
@@ -630,6 +666,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @return void
      * @throws InvalidArgumentException If remote candidates are added after end-of-candidates has been signaled
      */
+    #[Override]
     public function addRemoteCandidate(RTCIceCandidate $remoteCandidate): void
     {
         if ($this->remoteCandidatesEnd) {
@@ -638,7 +675,8 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         // Resolve mDNS candidate
         if ($this->isMdnsDomain($remoteCandidate->getHost())) {
-            if ($ip = $this->resolveMdns($remoteCandidate->getHost())) {
+            $ip = $this->resolveMdns($remoteCandidate->getHost());
+            if ($ip !== false) {
                 $remoteCandidate->setHost($ip);
             } else {
                 $this->logger?->error("Couldn't resolve the remote host", ["RemoteHost" => $remoteCandidate->getHost()]);
@@ -687,6 +725,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function endOfRemoteCandidate(): void
     {
         $this->resetComponentIds();
@@ -728,6 +767,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @return void Returns once the ICE connection is established.
      * @throws RuntimeException If ICE negotiation fails or preconditions aren’t met
      */
+    #[Override]
     public function connect(): void
     {
         $this->validateConnectionPreconditions();
@@ -739,7 +779,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $this->bindCheck()->await();
         } catch (Throwable $e) {
             $this->close();
-            throw new RuntimeException("ICE negotiation failed: " . $e->getMessage(), $e->getCode(), $e);
+            throw new RuntimeException("ICE negotiation failed: " . $e->getMessage(), (int)$e->getCode(), $e);
         }
 
         if ($this->checkListState === CheckListState::ICE_FAILED) {
@@ -785,7 +825,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function processEarlyChecks(): void
     {
         foreach ($this->earlyChecks as $earlyCheck) {
-            $this->checkIncoming(...$earlyCheck);
+            $this->checkIncoming($earlyCheck[0], $earlyCheck[1], $earlyCheck[2]);
         }
 
         $this->earlyChecks = [];
@@ -828,7 +868,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function sortCheckList(): void
     {
-        $pairPriority = function (RTCIceCandidatePair $pair) {
+        $pairPriority = function (RTCIceCandidatePair $pair): int {
             $G = $this->isControllingRole() ? $pair->getLocalCandidate()->getPriority() : $pair->getRemoteCandidate()->getPriority();
             $D = $this->isControllingRole() ? $pair->getRemoteCandidate()->getPriority() : $pair->getLocalCandidate()->getPriority();
 
@@ -836,7 +876,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         };
 
         // Sort the candidate pairs using the priority function
-        usort($this->checkList, function ($a, $b) use ($pairPriority) {
+        usort($this->checkList, function (RTCIceCandidatePair $a, RTCIceCandidatePair $b) use ($pairPriority): int {
             return $pairPriority($a) <=> $pairPriority($b);
         });
     }
@@ -852,7 +892,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function findPair(IceConnectionProtocolInterface $protocol, RTCIceCandidate $remoteCandidate): ?RTCIceCandidatePair
     {
-        return array_find($this->checkList, fn(RTCIceCandidatePair $candidatePair) => $candidatePair->getProtocol()->getId() === $protocol->getId() && $candidatePair->getRemoteCandidate() === $remoteCandidate);
+        foreach ($this->checkList as $candidatePair) {
+            if ($candidatePair->getProtocol()->getId() === $protocol->getId() && $candidatePair->getRemoteCandidate() === $remoteCandidate) {
+                return $candidatePair;
+            }
+        }
+        return null;
     }
 
     /**
@@ -864,6 +909,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function unfreezeChecks(): void
     {
         $firstPair = $this->getFirstPairForFirstComponent();
@@ -885,7 +931,17 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function getFirstPairForFirstComponent(): ?RTCIceCandidatePair
     {
-        return array_find($this->checkList, fn($pair) => $pair->getComponentId() === min($this->componentIds));
+        if ($this->componentIds === []) {
+            return null;
+        }
+
+        $minComponentId = min($this->componentIds);
+        foreach ($this->checkList as $pair) {
+            if ($pair->getComponentId() === $minComponentId) {
+                return $pair;
+            }
+        }
+        return null;
     }
 
     /**
@@ -950,9 +1006,13 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @return void
      * @throws RandomException If there's an error in random generation
      */
+    #[Override]
     public function checkIncoming(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol): void
     {
-        $remoteCandidate = $this->findOrCreateRemoteCandidate($message, $address, $protocol->getCandidate()->getComponentId());
+        $localCandidate = $protocol->getCandidate();
+        assert($localCandidate !== null);
+
+        $remoteCandidate = $this->findOrCreateRemoteCandidate($message, $address, $localCandidate->getComponentId());
         $pair = $this->findPair($protocol, $remoteCandidate) ?? $this->createNewCandidatePair($protocol, $remoteCandidate);
         if (in_array($pair->getState(), [RTCIceCandidatePairStats::WAITING, RTCIceCandidatePairStats::FAILED], true)) {
             $this->startCheckBinding($pair);
@@ -1003,7 +1063,11 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function createPeerReflexiveCandidate(MessageInterface $message, string $host, int $port, int $componentId): RTCIceCandidate
     {
         $candidate = $this->createCandidate(Uuid::uuid4()->toString(), $host, $port, $componentId, CandidateType::prflx);
-        $candidate->setPriority($message->attributes()->get(MessageAttribute::PRIORITY));
+        /** @var int|null $priority */
+        $priority = $message->attributes()->get(MessageAttribute::PRIORITY);
+        if ($priority !== null) {
+            $candidate->setPriority($priority);
+        }
         $candidate->setFoundation(Utils::getRandomString(10));
         $this->remoteCandidates[] = $candidate;
 
@@ -1148,9 +1212,11 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     public function handleBindingError(TransactionExceptionInterface $e, RTCIceCandidatePair $pair, MessageInterface $message): void
     {
-        $errMessageAttr = $e->getStunMessage()?->attributes();
+        $stunMessage = $e instanceof TransactionException ? $e->getStunMessage() : null;
+        /** @var array{0: int, 1: string}|null $errorCode */
+        $errorCode = $stunMessage?->attributes()->get(MessageAttribute::ERROR_CODE);
 
-        if ($errMessageAttr && $errMessageAttr->get(MessageAttribute::ERROR_CODE)[0] === 487) {
+        if ($errorCode !== null && $errorCode[0] === 487) {
             $this->setRole(($message->attributes()->has(MessageAttribute::ICE_CONTROLLING) ? IceRole::Controlled : IceRole::Controlling));
             $this->startCheckBinding($pair); // Retry after switching roles
         } else {
@@ -1180,6 +1246,10 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         async(function () use ($pair, $message, $remoteAddress, $nominate): void {
             try {
                 [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                if ($address === null) {
+                    $this->markPairFailed($pair);
+                    return;
+                }
                 $this->handleCheckBinding($address, $pair, $nominate);
             } catch (TransactionExceptionInterface $e) {
                 $this->handleBindingError($e, $pair, $message);
@@ -1207,7 +1277,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     public function buildBindingMessage(RTCIceCandidatePair $pair, bool $nominate): MessageInterface
     {
         $messageAttr = [
-            MessageAttribute::USERNAME->name => sprintf("%s:%s", $this->remoteUsername, $this->localUsername),
+            MessageAttribute::USERNAME->name => sprintf("%s:%s", $this->remoteUsername ?? '', $this->localUsername),
             MessageAttribute::PRIORITY->name => $pair->getLocalCandidate()->getPriority(CandidateType::prflx->value)
         ];
 
@@ -1286,6 +1356,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function bindCheck(): Future
     {
+        /** @var DeferredFuture<void> */
         $this->bindingCheck = new DeferredFuture();
         $future = $this->bindingCheck->getFuture();
         $this->scheduleBindingCheck();
@@ -1340,9 +1411,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return;
         }
 
-        if ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED)
-            || $this->tryFailedCount > self::RETRY_BINDING_MAX
-        ) {
+        if ($this->tryFailedCount > self::RETRY_BINDING_MAX) {
             $this->settleBindingCheck(new RuntimeException("Binding check failed"));
         }
     }
@@ -1447,6 +1516,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @param RTCIceCandidatePair $pair The candidate pair that completed checking
      * @return void
      */
+    #[Override]
     public function completeCheckAction(RTCIceCandidatePair $pair): void
     {
         if ($pair->getState() === RTCIceCandidatePairStats::SUCCEEDED) {
@@ -1609,6 +1679,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function periodicConsentCheck(): void
     {
         $interval = $this->calculateConsentInterval();
@@ -1649,7 +1720,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     private function calculateConsentInterval(): float
     {
         // See https://www.rfc-editor.org/rfc/rfc7675#section-5.1
-        return self::CONSENT_INTERVAL * (0.8 + 0.4 * mt_rand() / mt_getrandmax());
+        return (float)self::CONSENT_INTERVAL * (0.8 + 0.4 * (float)mt_rand() / (float)mt_getrandmax());
     }
 
     /**
@@ -1663,6 +1734,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @throws Throwable
      */
+    #[Override]
     public function close(): void
     {
         $this->stopPeriodicConsentCheck();
@@ -1687,7 +1759,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function stopPeriodicConsentCheck(): void
     {
-        if ($this->queryConsentTimer) {
+        if ($this->queryConsentTimer !== null) {
             EventLoop::cancel($this->queryConsentTimer);
             $this->queryConsentTimer = null;
         }
@@ -1741,6 +1813,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @throws RuntimeException If no nominated pair exists for the given component.
      *
      */
+    #[Override]
     public function sendData(string $data, int $componentId = 1): void
     {
         if (isset($this->nominated[$componentId])) {
@@ -1761,6 +1834,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function onDataReceived(string $data, int $componentId): void
     {
         $this->emit("data", [$data, $componentId]);
@@ -1781,6 +1855,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @throws RandomException
      *
      */
+    #[Override]
     public function onRequestReceived(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol, string $data): void
     {
         if (!$this->isBindingRequest($message) || !$this->authenticateRequest($message, $data)) {
@@ -1829,7 +1904,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         try {
             Message::decode($data, $this->localPassword);
 
-            if ($this->remoteUsername) {
+            if ($this->remoteUsername !== null) {
                 $expectedUsername = sprintf("%s:%s", $this->localUsername, $this->remoteUsername);
                 return $message->attributes()->get(MessageAttribute::USERNAME) === $expectedUsername;
             }
@@ -1860,7 +1935,9 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         if ($this->isControllingRole() && $attributes->has(MessageAttribute::ICE_CONTROLLING)) {
             $this->logger?->info("Role conflict detected: expected controlling role.");
-            if ($this->compareTieBreaker($attributes->get(MessageAttribute::ICE_CONTROLLING)) >= 0) {
+            /** @var int|null $controlling */
+            $controlling = $attributes->get(MessageAttribute::ICE_CONTROLLING);
+            if (is_int($controlling) && $this->compareTieBreaker($controlling) >= 0) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -1869,7 +1946,9 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             $this->setRole(IceRole::Controlled);
         } elseif ($this->isControlledRole() && $attributes->has(MessageAttribute::ICE_CONTROLLED)) {
             $this->logger?->info("Role conflict detected: expected controlled role.");
-            if ($this->compareTieBreaker($attributes->get(MessageAttribute::ICE_CONTROLLED)) < 0) {
+            /** @var int|null $controlled */
+            $controlled = $attributes->get(MessageAttribute::ICE_CONTROLLED);
+            if (is_int($controlled) && $this->compareTieBreaker($controlled) < 0) {
                 $this->respondError($message, $address, $protocol, [487, "Role Conflict"]);
 
                 return true;
@@ -1908,7 +1987,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
         async(function () use ($protocol, $responseMessage, $address) {
             try {
-                $response = $protocol->request($responseMessage, $address);
+                $response = $protocol->request($responseMessage, $address, null);
                 $this->logger?->info("Binding response sent successfully", [
                     "Message" => $response[0]->humanReadable(),
                     "Address" => $response[1]
@@ -1933,6 +2012,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      * @throws RandomException
      *
      */
+    #[Override]
     public function respondError(MessageInterface $orgMessage, InternetAddress $address, IceConnectionProtocolInterface $protocol, array $errorCode): void
     {
         $messageAttr = [MessageAttribute::ERROR_CODE->name => $errorCode];
@@ -1968,6 +2048,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function onClose(): void
     {
         $this->emit("onClose");
@@ -1980,6 +2061,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function onError(Throwable $e): void
     {
         $this->emit("onError", [$e]);
@@ -2010,6 +2092,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return IceRole The current ICE role.
      */
+    #[Override]
     public function getIceRole(): IceRole
     {
         return $this->iceRole;
@@ -2038,7 +2121,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $sortedCandidates = $this->localCandidates;
         usort($sortedCandidates, fn(RTCIceCandidate $a, RTCIceCandidate $b) => $a->getPriority() <=> $b->getPriority());
 
-        return array_find($sortedCandidates, fn(RTCIceCandidate $candidate) => $candidate->getComponentId() === $component);
+        foreach ($sortedCandidates as $candidate) {
+            if ($candidate->getComponentId() === $component) {
+                return $candidate;
+            }
+        }
+        return null;
     }
 
     /**
@@ -2103,6 +2191,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return bool True if no more remote candidates are expected.
      */
+    #[Override]
     public function isRemoteCandidatesEnd(): bool
     {
         return $this->remoteCandidatesEnd;
@@ -2121,8 +2210,8 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     public function setTransportPolicy(TransportPolicyType $transportPolicy): void
     {
-        if (!$this->configuration->getStunServer()
-            && !$this->configuration->getTurnServer()
+        if ($this->configuration->getStunServer() === null
+            && $this->configuration->getTurnServer() === null
             && $transportPolicy === TransportPolicyType::RELAY) {
             throw new InvalidArgumentException("Relay transport policy requires a STUN and/or TURN server.");
         }
@@ -2137,6 +2226,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      *
      * @return void
      */
+    #[Override]
     public function setIceRole(IceRole $iceRole): void
 
     {
@@ -2148,11 +2238,17 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->icePortRange = $icePortRange;
     }
 
+    /**
+     * @return array<int, string>|null
+     */
     public function getNat1to1(): ?array
     {
         return $this->nat1to1;
     }
 
+    /**
+     * @param array<int, string>|null $nat1to1
+     */
     public function setNat1to1(?array $nat1to1): void
     {
         $this->nat1to1 = $nat1to1;

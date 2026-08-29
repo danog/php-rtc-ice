@@ -6,10 +6,11 @@ use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\IceRole;
 use Webrtc\ICE\Enum\TransportPolicyType;
 
-class RTCICESetting
+final class RTCICESetting
 {
     private ?array $icePortRange = null;
     private TransportPolicyType $transportPolicy = TransportPolicyType::ALL;
+    /** @var array<int, string>|null */
     private ?array $nat1to1 = null;
     private bool $iceLite = false;
     // it will be changed for only testing purpose
@@ -43,11 +44,17 @@ class RTCICESetting
         $this->transportPolicy = $transportPolicy;
     }
 
+    /**
+     * @return array<int, string>|null
+     */
     public function getNat1to1(): ?array
     {
         return $this->nat1to1;
     }
 
+    /**
+     * @param array<int, string>|null $nat1to1
+     */
     public function setNat1to1(?array $nat1to1): void
     {
         $this->nat1to1 = $nat1to1;

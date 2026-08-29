@@ -17,7 +17,7 @@ use function parse_url;
 /**
  * Utility class for ICE-related operations.
  */
-class Utils
+final class Utils
 {
     /**
      * Generate a random alphanumeric string of a given length.
@@ -80,7 +80,13 @@ class Utils
         }
 
         $address = parse_url($address);
+        if ($address === false) {
+            return [null, null];
+        }
 
-        return [trim($address['host'], '[]') ?? null, $address['port'] ?? null];
+        $host = $address['host'] ?? null;
+        $port = $address['port'] ?? null;
+
+        return [is_string($host) ? trim($host, '[]') : null, is_int($port) ? $port : null];
     }
 }

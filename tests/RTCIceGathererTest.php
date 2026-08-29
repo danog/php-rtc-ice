@@ -16,10 +16,6 @@ use Webrtc\ICE\RTCIceProtocolConfiguration;
 use Webrtc\ICE\RTCIceServer;
 use Webrtc\ICE\Trait\NetworkAdapter;
 use Webrtc\ICE\Utils;
-use Webrtc\STUN\BaseProtocol;
-use Webrtc\STUN\Datagram;
-use Webrtc\STUN\Stun;
-use Webrtc\TURN\TCPConnection;
 
 #[UsesClass(IceProtocolParser::class)]
 #[UsesClass(RTCIceCandidate::class)]
@@ -27,10 +23,6 @@ use Webrtc\TURN\TCPConnection;
 #[UsesClass(RTCIceProtocolConfiguration::class)]
 #[UsesTrait(NetworkAdapter::class)]
 #[UsesClass(Utils::class)]
-#[UsesClass(BaseProtocol::class)]
-#[UsesClass(Datagram::class)]
-#[UsesClass(Stun::class)]
-#[UsesClass(TCPConnection::class)]
 #[UsesClass(RTCIceServer::class)]
 #[UsesClass(RTCICESetting::class)]
 #[CoversClass(RTCIceGatherer::class)]

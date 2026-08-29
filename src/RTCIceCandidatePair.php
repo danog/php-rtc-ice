@@ -29,7 +29,7 @@ use Webrtc\STUN\IceConnectionProtocolInterface;
  *
  * @see https://datatracker.ietf.org/doc/html/rfc8445#section-6.1.2.2
  */
-class RTCIceCandidatePair
+final class RTCIceCandidatePair
 {
     /**
      * Indicates whether the local agent has nominated this candidate pair
@@ -75,7 +75,9 @@ class RTCIceCandidatePair
      */
     public function getComponentId(): int
     {
-        return $this->protocol->getCandidate()->getComponentId();
+        $candidate = $this->protocol->getCandidate();
+        assert($candidate !== null);
+        return $candidate->getComponentId();
     }
 
     /**
@@ -86,7 +88,10 @@ class RTCIceCandidatePair
     public function getLocalAddress(): InternetAddress
     {
         $candidate = $this->protocol->getCandidate();
-        return new InternetAddress($candidate->getHost(), $candidate->getPort());
+        assert($candidate !== null);
+        /** @var int<0, 65535> $port */
+        $port = $candidate->getPort();
+        return new InternetAddress($candidate->getHost(), $port);
     }
 
     /**
@@ -96,7 +101,9 @@ class RTCIceCandidatePair
      */
     public function getLocalCandidate(): RTCIceCandidate
     {
-        return $this->protocol->getCandidate();
+        $candidate = $this->protocol->getCandidate();
+        assert($candidate !== null);
+        return $candidate;
     }
 
     /**
@@ -106,7 +113,9 @@ class RTCIceCandidatePair
      */
     public function getRemoteAddress(): InternetAddress
     {
-        return new InternetAddress($this->remoteCandidate->getHost(), $this->remoteCandidate->getPort());
+        /** @var int<0, 65535> $port */
+        $port = $this->remoteCandidate->getPort();
+        return new InternetAddress($this->remoteCandidate->getHost(), $port);
     }
 
     /**

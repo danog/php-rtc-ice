@@ -41,7 +41,8 @@
     },
     "require-dev": {
         "mockery/mockery": "^1.6",
-        "phpunit/phpunit": "^13.0"
+        "phpunit/phpunit": "^13.0",
+        "bamarni/composer-bin-plugin": "^1.9"
     },
     "autoload": {
         "psr-4": {
@@ -53,5 +54,16 @@
             "Tests\\Webrtc\\ICE\\": "tests"
         }
     },
-    "minimum-stability": "stable"
+    "minimum-stability": "stable",
+    "config": {
+        "allow-plugins": {
+            "bamarni/composer-bin-plugin": true
+        }
+    },
+    "extra": {
+        "bamarni-bin": {
+            "bin-links": true,
+            "forward-command": true
+        }
+    }
 }

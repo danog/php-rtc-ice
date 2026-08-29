@@ -14,7 +14,7 @@ namespace Webrtc\ICE;
 use Webrtc\Mixin\DataClass;
 
 #[DataClass]
-class RTCIceParameters
+final class RTCIceParameters
 {
     /**
      * @param string|null $usernameFragment Remote/Local Ice username

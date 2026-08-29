@@ -36,12 +36,24 @@ interface RTCIceConnectionInterface
 
     public function setLocalPassword(string $localPassword): void;
 
+    /**
+     * @return RTCIceCandidate[]
+     */
     public function getLocalCandidates(): array;
 
+    /**
+     * @param RTCIceCandidate[] $localCandidates
+     */
     public function setLocalCandidates(array $localCandidates): void;
 
+    /**
+     * @return RTCIceCandidate[]
+     */
     public function getRemoteCandidates(): array;
 
+    /**
+     * @param RTCIceCandidate[] $remoteCandidates
+     */
     public function setRemoteCandidates(array $remoteCandidates): void;
 
     public function getRemoteUsername(): ?string;
@@ -52,8 +64,14 @@ interface RTCIceConnectionInterface
 
     public function setRemotePassword(?string $remotePassword): void;
 
+    /**
+     * @return array<int>
+     */
     public function getComponentIds(): array;
 
+    /**
+     * @param array<int> $componentIds
+     */
     public function setComponentIds(array $componentIds): void;
 
     public function isRemoteIsLite(): bool;

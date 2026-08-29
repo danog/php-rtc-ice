@@ -11,6 +11,8 @@
 
 namespace Webrtc\ICE;
 
+use Override;
+
 /**
  * Class RTCIceServer
  *
@@ -21,7 +23,7 @@ namespace Webrtc\ICE;
  * Typically used to configure ICE transport behavior when establishing peer-to-peer
  * WebRTC connections.
  */
-class RTCIceServer implements RTCIceServerInterface
+final class RTCIceServer implements RTCIceServerInterface
 {
     /**
      * @var array<string> List of STUN/TURN server URLs.
@@ -48,6 +50,7 @@ class RTCIceServer implements RTCIceServerInterface
      *
      * @return array<string> Array of server URLs.
      */
+    #[\Override]
     public function getUrls(): array
     {
         return $this->urls;
@@ -56,7 +59,7 @@ class RTCIceServer implements RTCIceServerInterface
     /**
      * Set one or more server URLs for the ICE server.
      *
-     * @param array|string $urls A string or array of STUN/TURN URLs.
+     * @param array<string>|string $urls A string or array of STUN/TURN URLs.
      *                           If a string is passed, it is added to the existing list.
      *
      * @return void
@@ -71,6 +74,7 @@ class RTCIceServer implements RTCIceServerInterface
      *
      * @return string|null Username or null if not set.
      */
+    #[\Override]
     public function getUsername(): ?string
     {
         return $this->username;
@@ -93,6 +97,7 @@ class RTCIceServer implements RTCIceServerInterface
      *
      * @return string|null Credential or null if not set.
      */
+    #[\Override]
     public function getCredential(): ?string
     {
         return $this->credential;
@@ -115,6 +120,7 @@ class RTCIceServer implements RTCIceServerInterface
      *
      * @return string Credential type (typically "password" or "token").
      */
+    #[\Override]
     public function getCredentialType(): string
     {
         return $this->credentialType;

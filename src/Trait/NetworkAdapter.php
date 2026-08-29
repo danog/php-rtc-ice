@@ -28,6 +28,7 @@ use Webrtc\ICE\Utils;
  */
 trait NetworkAdapter
 {
+    /** @var array<string, array<int, string>>|null */
     private ?array $hostAddressCache = null;
     /**
      * Retrieve host addresses from local network interfaces
@@ -37,7 +38,7 @@ trait NetworkAdapter
      *
      * @param bool $useIPv4 Whether to include IPv4 addresses (default: true)
      * @param bool $useIPv6 Whether to include IPv6 addresses (default: true)
-     * @return array Array of filtered IP addresses based on protocol preferences
+     * @return array<int, string> Array of filtered IP addresses based on protocol preferences
      * @throws \Throwable If network interface retrieval fails
      *
      * @example
@@ -61,7 +62,7 @@ trait NetworkAdapter
      * excluding loopback addresses, and organizes them by IP version.
      * IPv6 addresses are enclosed in square brackets for URI compatibility.
      *
-     * @return array Array of addresses grouped by IP version (v4, v6)
+     * @return array<string, array<int, string>> Array of addresses grouped by IP version (v4, v6)
      *
      * @example
      * $addresses = $this->getHostFromNetworkAdapter();
@@ -69,19 +70,26 @@ trait NetworkAdapter
      */
     private function getHostFromNetworkAdapter(): array
     {
-        $hostAddresses = [];
+        /** @var array<string, array<int, string>> $hostAddresses */
+        $hostAddresses = ['v4' => [], 'v6' => []];
 
-        foreach ($this->getInterfaces() as $interface) {
-            if (!isset($interface["unicast"])) {
-                continue;
-            }
+        /** @var array<string, array{unicast?: array<int, array{address?: string}>}> $interfaces */
+        $interfaces = $this->getInterfaces();
 
-            foreach ($interface["unicast"] as $adapter) {
-                if ($address = $adapter["address"] ?? null) {
-                    if (!in_array($address ,["127.0.0.1", "::1"])) {
-                        $version = Utils::IPVersion($address);
-                        $hostAddresses["v$version"][] = $version === 6 ? "[" .$address ."]" : $address;
+        foreach ($interfaces as $interface) {
+            foreach ($interface["unicast"] ?? [] as $adapter) {
+                $address = $adapter["address"] ?? null;
+                if (!is_string($address)) {
+                    continue;
+                }
+
+                if (!in_array($address, ["127.0.0.1", "::1"], true)) {
+                    $version = Utils::IPVersion($address);
+                    if ($version === false) {
+                        continue;
                     }
+
+                    $hostAddresses[$version === 6 ? "v6" : "v4"][] = $version === 6 ? "[$address]" : $address;
                 }
             }
         }
@@ -99,7 +107,7 @@ trait NetworkAdapter
      * @param array $hostAddresses Addresses to filter (grouped by v4/v6)
      * @param bool $useIPv4 Whether to include IPv4 addresses
      * @param bool $useIPv6 Whether to include IPv6 addresses
-     * @return array Filtered array of addresses
+     * @return array<int, string> Filtered array of addresses
      *
      * @example
      * $filtered = $this->filterAddresses($hostAddresses, true, false);
@@ -107,7 +115,9 @@ trait NetworkAdapter
      */
     private function filterAddresses(array $hostAddresses, bool $useIPv4, bool $useIPv6): array
     {
+        /** @var array<int, string> $v4 */
         $v4 = $hostAddresses["v4"] ?? [];
+        /** @var array<int, string> $v6 */
         $v6 = $hostAddresses["v6"] ?? [];
 
         return match (true) {
@@ -123,11 +133,16 @@ trait NetworkAdapter
      * Wrapper for PHP's net_get_interfaces() function.
      * Returns an array of all the network interfaces on the machine.
      *
-     * @return array Network interface information
+     * @return array<string, array<string, mixed>> Network interface information
      * @see https://www.php.net/manual/en/function.net-get-interfaces.php
      */
     public function getInterfaces(): array
     {
-        return net_get_interfaces();
+        $interfaces = net_get_interfaces();
+        if ($interfaces === false) {
+            return [];
+        }
+
+        return $interfaces;
     }
 }

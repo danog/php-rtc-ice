@@ -11,6 +11,7 @@
 
 namespace Webrtc\ICE;
 
+use Override;
 use Webrtc\Exception\InvalidArgumentException;
 
 /**
@@ -22,7 +23,7 @@ use Webrtc\Exception\InvalidArgumentException;
  * including credentials and transport settings. It is used internally by ICE components
  * to determine how candidates should be gathered and communicated.
  */
-class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterface
+final class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterface
 {
     private ?array $stunServer = null;
     private ?array $turnServer = null;
@@ -36,6 +37,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return array|null The STUN server as an array (e.g., ['host' => ..., 'port' => ...]) or null.
      */
+    #[\Override]
+
     public function getStunServer(): ?array
     {
         return $this->stunServer;
@@ -44,13 +47,17 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
     /**
      * Set the STUN server configuration.
      *
+     * An empty array means "no STUN server" and is normalized to null.
+     *
      * @param array|null $stunServer The STUN server array or null to unset.
      *
      * @return void
      */
+    #[\Override]
+
     public function setStunServer(?array $stunServer): void
     {
-        $this->stunServer = $stunServer;
+        $this->stunServer = $stunServer === [] ? null : $stunServer;
     }
 
     /**
@@ -58,6 +65,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return array|null The TURN server as an array (e.g., ['host' => ..., 'port' => ...]) or null.
      */
+    #[\Override]
+
     public function getTurnServer(): ?array
     {
         return $this->turnServer;
@@ -70,6 +79,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return void
      */
+    #[\Override]
+
     public function setTurnServer(?array $turnServer): void
     {
         $this->turnServer = $turnServer;
@@ -80,6 +91,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return bool True if SSL is enabled, false otherwise.
      */
+    #[\Override]
+
     public function getTurnSsl(): bool
     {
         return $this->turnSsl;
@@ -92,6 +105,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return void
      */
+    #[\Override]
+
     public function setTurnSsl(bool $turnSsl): void
     {
         $this->turnSsl = $turnSsl;
@@ -102,6 +117,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return string|null The username or null if not set.
      */
+    #[\Override]
+
     public function getTurnUsername(): ?string
     {
         return $this->turnUsername;
@@ -114,6 +131,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return void
      */
+    #[\Override]
+
     public function setTurnUsername(?string $turnUsername): void
     {
         $this->turnUsername = $turnUsername;
@@ -124,6 +143,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return string|null The password or null if not set.
      */
+    #[\Override]
+
     public function getTurnPassword(): ?string
     {
         return $this->turnPassword;
@@ -136,6 +157,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return void
      */
+    #[\Override]
+
     public function setTurnPassword(?string $turnPassword): void
     {
         $this->turnPassword = $turnPassword;
@@ -146,6 +169,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return string Either 'udp' or 'tcp'.
      */
+    #[\Override]
+
     public function getTurnTransport(): string
     {
         return $this->turnTransport;
@@ -160,6 +185,8 @@ class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationInterfac
      *
      * @return void
      */
+    #[\Override]
+
     public function setTurnTransport(string $turnTransport): void
     {
         if (!in_array($turnTransport, ['udp', 'tcp'], true)) {

@@ -23,62 +23,24 @@ use Webrtc\ICE\RTCIceCandidatePair;
 use Webrtc\ICE\RTCIceConnection;
 use Webrtc\ICE\RTCIceProtocolConfiguration;
 use Webrtc\ICE\Utils;
-use Webrtc\MDNS\Factory;
-use Webrtc\MDNS\MulticastExecutor;
-use Webrtc\Mixin\EventForwarder;
-use Webrtc\STUN\Datagram;
 use Webrtc\STUN\Enum\MessageAttribute;
 use Webrtc\STUN\Enum\MessageClass;
 use Webrtc\STUN\Enum\MessageMethod;
-use Webrtc\STUN\Exception\TransactionException;
 use Webrtc\STUN\Exception\TransactionExceptionInterface;
-use Webrtc\STUN\Exception\TransactionFailedException;
 use Webrtc\STUN\Exception\TransactionTimeoutException;
 use Webrtc\STUN\IceConnectionProtocolInterface;
 use Webrtc\STUN\Message\Message;
-use Webrtc\STUN\Message\MessageAttributeCollection;
-use Webrtc\STUN\Message\MessageAttributeEncoder;
-use Webrtc\STUN\Message\MessageIntegrity;
 use Webrtc\STUN\Message\MessageInterface;
 use Webrtc\STUN\Stun;
-use Webrtc\STUN\Trait\CandidateSetterGetter;
 use Webrtc\STUN\Trait\Request;
-use Webrtc\STUN\Transaction;
-use Webrtc\TURN\TCPConnection;
-use Webrtc\TURN\Trait\TurnConnection;
-use Webrtc\TURN\Turn;
-use Webrtc\TURN\TurnTcpConnection;
-use Webrtc\TURN\TurnUdpConnection;
 use function Amp\async;
 use function Amp\delay;
 use function Amp\Future\await;
 
 #[UsesClass(RTCIceProtocolConfiguration::class)]
 #[UsesClass(Utils::class)]
-#[UsesClass(Factory::class)]
-#[UsesClass(MulticastExecutor::class)]
-#[UsesClass(Datagram::class)]
-#[UsesClass(Message::class)]
-#[UsesClass(MessageAttribute::class)]
-#[UsesClass(MessageAttributeCollection::class)]
-#[UsesClass(MessageAttributeEncoder::class)]
-#[UsesClass(MessageIntegrity::class)]
-#[UsesClass(Stun::class)]
-#[UsesTrait(CandidateSetterGetter::class)]
-#[UsesTrait(EventForwarder::class)]
-#[UsesTrait(Request::class)]
-#[UsesClass(Transaction::class)]
-#[UsesClass(\Webrtc\STUN\Utils::class)]
-#[UsesTrait(TurnConnection::class)]
-#[UsesClass(TurnUdpConnection::class)]
-#[UsesClass(TransactionException::class)]
-#[UsesClass(TransactionTimeoutException::class)]
 #[UsesClass(RTCIceCandidate::class)]
 #[UsesClass(RTCIceCandidatePair::class)]
-#[UsesClass(TransactionFailedException::class)]
-#[UsesClass(Turn::class)]
-#[UsesClass(TCPConnection::class)]
-#[UsesClass(TurnTcpConnection::class)]
 #[CoversClass(RTCIceConnection::class)]
 class RTCIceConnectionTest extends TestCase
 {

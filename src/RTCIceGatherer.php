@@ -12,6 +12,7 @@
 namespace Webrtc\ICE;
 
 use Evenement\EventEmitter;
+use Override;
 use Psr\Log\LoggerInterface;
 use Random\RandomException;
 use Throwable;
@@ -27,7 +28,7 @@ use Webrtc\ICE\Enum\IceGatheringState;
  * Events:
  * - `statechange`: Emitted when the ICE gathering state transitions.
  */
-class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
+final class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
 {
     private RTCIceConnectionInterface $iceConnection;
     private IceGatheringState $state = IceGatheringState::new;
@@ -37,7 +38,7 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      *
      * Initializes ICE connection with the given ICE servers and role. Optionally accepts a logger.
      *
-     * @param array $iceServes List of ICE server configurations.
+     * @param RTCIceServer[] $iceServes List of ICE server configurations.
      * @param ?RTCICESetting $setting The ICE settings.
      * @param LoggerInterface|null $logger Optional logger for debugging.
      *
@@ -97,6 +98,7 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      *
      * @return IceGatheringState The state of ICE candidate gathering.
      */
+    #[\Override]
     public function getState(): IceGatheringState
     {
         return $this->state;
@@ -118,8 +120,9 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
     /**
      * Returns the list of local ICE candidates that have been gathered.
      *
-     * @return array The gathered local candidates.
+     * @return RTCIceCandidate[] The gathered local candidates.
      */
+    #[\Override]
     public function getLocalCandidates(): array
     {
         return $this->iceConnection->getLocalCandidates();
@@ -130,6 +133,7 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      *
      * @return RTCIceParameters The local ICE credentials.
      */
+    #[\Override]
     public function getLocalParameters(): RTCIceParameters
     {
         return new RTCIceParameters($this->iceConnection->getLocalUsername(), $this->iceConnection->getLocalPassword());
@@ -140,6 +144,7 @@ class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
      *
      * @return RTCIceConnectionInterface The ICE connection object.
      */
+    #[\Override]
     public function getIceConnection(): RTCIceConnectionInterface
     {
         return $this->iceConnection;

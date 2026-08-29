@@ -18,7 +18,7 @@ interface RTCIceGathererInterface
     public function getIceConnection(): RTCIceConnectionInterface;
     public function getState(): IceGatheringState;
 
-    /** @return list<RTCIceCandidate> */
+    /** @return RTCIceCandidate[] */
     public function getLocalCandidates(): array;
     public function getLocalParameters(): RTCIceParameters;
 }
