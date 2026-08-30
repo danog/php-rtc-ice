@@ -31,7 +31,7 @@ use Webrtc\STUN\Exception\TransactionTimeoutException;
 use Webrtc\STUN\IceConnectionProtocolInterface;
 use Webrtc\STUN\Message\Message;
 use Webrtc\STUN\Message\MessageInterface;
-use Webrtc\STUN\Stun;
+use Webrtc\STUN\StunInterface;
 use Webrtc\STUN\Trait\Request;
 use function Amp\async;
 use function Amp\delay;
@@ -1249,7 +1249,7 @@ class RTCIceConnectionTest extends TestCase
         $candidateMock->shouldReceive('getComponentId')->once()->andReturn(1);
         $candidateMock->shouldReceive('getPriority')->once()->andReturn(1234596);
 
-        $protocolMock = Mockery::mock(Stun::class);
+        $protocolMock = Mockery::mock(StunInterface::class);
         $protocolMock->shouldReceive('getCandidate')->andReturn($candidateMock);
         $protocolMock->shouldReceive('request')->andReturnUsing(function (...$args) {
             // request() blocks and throws now, rather than handing back a rejected promise.
@@ -1284,7 +1284,7 @@ class RTCIceConnectionTest extends TestCase
         $connection = $this->getIceConnection();
 
         $messages = [];
-        $protocolMock = Mockery::mock(Stun::class);
+        $protocolMock = Mockery::mock(StunInterface::class);
         $protocolMock->shouldReceive('sendMessage')->andReturnUsing(function (...$args) use (&$messages) {
             $messages[] = $args[0];
         });
@@ -1309,7 +1309,7 @@ class RTCIceConnectionTest extends TestCase
         $candidateMock->shouldReceive('getPort')->once()->andReturn(1234);
         $candidateMock->shouldReceive('getPriority')->once()->andReturn(564123);
 
-        $protocolMock = Mockery::mock(Stun::class);
+        $protocolMock = Mockery::mock(StunInterface::class);
         $protocolMock->shouldReceive('getCandidate')->andReturn($candidateMock);
         $protocolMock->shouldReceive('request')->andReturnUsing(function (...$args) {
             // request() blocks and throws now, rather than handing back a rejected promise.
