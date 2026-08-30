@@ -29,6 +29,8 @@ use Webrtc\Exception\InvalidArgumentException;
  *
  * @see https://datatracker.ietf.org/doc/html/rfc7064 STUN URI Scheme
  * @see https://datatracker.ietf.org/doc/html/rfc7065 TURN URI Scheme
+ *
+ * @psalm-type ParsedIceUrl = array{scheme: string, host: string, port: int, transport: string|null}
  */
 final readonly class IceProtocolParser
 {
@@ -59,7 +61,7 @@ final readonly class IceProtocolParser
             foreach ($iceServe->getUrls() as $url) {
                 $parsedUrl = $this->parseUrl($url);
 
-                switch ($parsedUrl->scheme) {
+                switch ($parsedUrl['scheme']) {
                     case 'stun':
                     case 'stuns':
                         $this->configureStunServer($iceConnectionConfiguration, $parsedUrl);
@@ -89,18 +91,18 @@ final readonly class IceProtocolParser
      * - Validates transport protocols for TURN servers
      *
      * @param string $url ICE server URL to parse
-     * @return object Parsed URL components including:
-     *                  - Scheme (stun/stuns/turn/turns)
+     * @return ParsedIceUrl Parsed URL components including:
+     *                  - scheme (stun/stuns/turn/turns)
      *                  - host
      *                  - port
-     *                  - transport (for TURN servers)
+     *                  - transport (for TURN servers, null otherwise)
      * @throws InvalidArgumentException If URL is malformed or contains invalid components
      *
      * @example
      * $parsed = $parser->parseUrl('turn:example.com?transport=udp');
-     * // Returns object with a scheme=turn, host=example.com, port=3478, transport=udp
+     * // Returns array with scheme=turn, host=example.com, port=3478, transport=udp
      */
-    public function parseUrl(string $url): object
+    public function parseUrl(string $url): array
     {
         if (preg_match('/^[a-zA-Z][a-zA-Z\d+\-.]*:/', $url) && !str_contains($url, '://')) {
             $url = preg_replace('/^([^:]+):/', '$1://', $url, 1) ?? $url;
@@ -119,13 +121,7 @@ final readonly class IceProtocolParser
         $host = $parts["host"];
         $port = $parts["port"] ?? (in_array($scheme, ["stuns", "turns"]) ? 5349 : 3478);
 
-        /** @var array{scheme: string, host: string, port: int, transport?: string} $parsed */
-        $parsed = [
-            "scheme" => $scheme,
-            "host" => $host,
-            "port" => $port,
-        ];
-
+        $transport = null;
         if (in_array($scheme, ["turn", "turns"])) {
             $query = [];
             if (isset($parts["query"])) {
@@ -134,11 +130,17 @@ final readonly class IceProtocolParser
 
             /** @var string|null $queryTransport */
             $queryTransport = $query["transport"] ?? null;
-            $transport = is_string($queryTransport) ? $queryTransport : null;
-            $parsed["transport"] = $transport ?? ($scheme === "turn" ? "udp" : "tcp");
+            $transport = is_string($queryTransport)
+                ? $queryTransport
+                : ($scheme === "turn" ? "udp" : "tcp");
         }
 
-        return (object)$parsed;
+        return [
+            "scheme" => $scheme,
+            "host" => $host,
+            "port" => $port,
+            "transport" => $transport,
+        ];
     }
 
     /**
@@ -148,12 +150,12 @@ final readonly class IceProtocolParser
      * Only configure the first valid STUN server encountered.
      *
      * @param RTCIceProtocolConfiguration $config Configuration object to modify
-     * @param object $parsedUrl Parsed URL components from parseUrl()
+     * @param ParsedIceUrl $parsedUrl Parsed URL components from parseUrl()
      */
-    private function configureStunServer(RTCIceProtocolConfiguration $config, object $parsedUrl): void
+    private function configureStunServer(RTCIceProtocolConfiguration $config, array $parsedUrl): void
     {
         if ($config->getStunServer() === null) {
-            $config->setStunServer([$parsedUrl->host, $parsedUrl->port]);
+            $config->setStunServer([$parsedUrl['host'], $parsedUrl['port']]);
         }
     }
 
@@ -166,24 +168,24 @@ final readonly class IceProtocolParser
      * - Credential type is 'password'
      *
      * @param RTCIceProtocolConfiguration $config Configuration object to modify
-     * @param object $parsedUrl Parsed URL components from parseUrl()
+     * @param ParsedIceUrl $parsedUrl Parsed URL components from parseUrl()
      * @param RTCIceServer $iceServe Source ICE server configuration containing credentials
      */
-    private function configureTurnServer(RTCIceProtocolConfiguration $config, object $parsedUrl, RTCIceServer $iceServe): void
+    private function configureTurnServer(RTCIceProtocolConfiguration $config, array $parsedUrl, RTCIceServer $iceServe): void
     {
         if ($config->getTurnServer() !== null) {
             return;
         }
 
-        if (($parsedUrl->scheme === 'turn' && !in_array($parsedUrl->transport, ['udp', 'tcp'])) ||
-            ($parsedUrl->scheme === 'turns' && $parsedUrl->transport !== 'tcp') ||
+        if (($parsedUrl['scheme'] === 'turn' && !in_array($parsedUrl['transport'], ['udp', 'tcp'])) ||
+            ($parsedUrl['scheme'] === 'turns' && $parsedUrl['transport'] !== 'tcp') ||
             ($iceServe->getCredentialType() !== 'password')) {
             return;
         }
 
-        $config->setTurnServer([$parsedUrl->host, $parsedUrl->port]);
-        $config->setTurnSsl($parsedUrl->scheme === 'turns');
-        $config->setTurnTransport((string)$parsedUrl->transport);
+        $config->setTurnServer([$parsedUrl['host'], $parsedUrl['port']]);
+        $config->setTurnSsl($parsedUrl['scheme'] === 'turns');
+        $config->setTurnTransport((string)$parsedUrl['transport']);
         $config->setTurnUsername($iceServe->getUsername());
         $config->setTurnPassword($iceServe->getCredential());
     }
