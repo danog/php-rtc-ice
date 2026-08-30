@@ -243,11 +243,11 @@ class RTCIceConnectionTest extends TestCase
         async(fn() => $connection2->connect())->ignore();
 
         $connection1->sendData('Hello');
-        delay(.01);
+        $this->waitForData($data2);
         $this->assertEquals('Hello', $data2[0][0]);
 
         $connection2->sendData('Bye');
-        delay(.01);
+        $this->waitForData($data1);
         $this->assertEquals('Bye', $data1[0][0]);
 
         $connection1->close();
@@ -1471,6 +1471,18 @@ class RTCIceConnectionTest extends TestCase
         $iceConnection->on('data', function (...$args) use (&$data) {
             $data [] = $args;
         });
+    }
+
+    /**
+     * Polls the connection loop until at least one datagram has been received, so
+     * delivery checks don't depend on fixed sleeps that are too short on slow CI nodes.
+     */
+    private function waitForData(array &$data, float $timeout = 5.0): void
+    {
+        $deadline = microtime(true) + $timeout;
+        while (!isset($data[0]) && microtime(true) < $deadline) {
+            delay(.01);
+        }
     }
 
     private function isSupportIPv6(): bool
