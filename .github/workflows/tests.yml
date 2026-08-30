@@ -11,27 +11,44 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        php: ["8.2", "8.3", "8.4", "8.5"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up PHP
+      - name: Set up PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           tools: composer:v2
 
-      - name: Install dependencies
-        run: composer install
+      - name: Validate composer.json and composer.lock
+        run: composer validate --strict
 
-      - name: Install Coturn
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Install Coturn (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y coturn
-
           # The PHPUnit suite owns the Coturn process and its lifecycle.
           sudo systemctl stop coturn || true
+
+      - name: Install Coturn (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install coturn
+
+      - name: Install Coturn (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install coturn -y
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress

@@ -848,7 +848,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $remoteCandidates = $rCandidate ? [$rCandidate] : $this->remoteCandidates;
         foreach ($remoteCandidates as $remoteCandidate) {
             foreach ($this->protocols as $protocol) {
-                if ($protocol->getCandidate()?->isPairableWith($remoteCandidate) && !$this->findPair($protocol, $remoteCandidate)) {
+                $localCandidate = $protocol->getCandidate();
+                if ($localCandidate === null) {
+                    continue;
+                }
+                assert($localCandidate instanceof RTCIceCandidate);
+                if ($localCandidate->isPairableWith($remoteCandidate) && !$this->findPair($protocol, $remoteCandidate)) {
                     $this->checkList[] = new RTCIceCandidatePair($protocol, $remoteCandidate);
                 }
             }

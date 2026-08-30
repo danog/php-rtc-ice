@@ -102,7 +102,7 @@ final class RTCIceCandidatePair
     public function getLocalCandidate(): RTCIceCandidate
     {
         $candidate = $this->protocol->getCandidate();
-        assert($candidate !== null);
+        assert($candidate instanceof RTCIceCandidate);
         return $candidate;
     }
 

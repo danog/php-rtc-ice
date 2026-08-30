@@ -55,6 +55,14 @@
         }
     },
     "minimum-stability": "stable",
+    "scripts": {
+        "post-install-cmd": [
+            "@composer bin all install --ansi"
+        ],
+        "post-update-cmd": [
+            "@composer bin all update --ansi"
+        ]
+    },
     "config": {
         "allow-plugins": {
             "bamarni/composer-bin-plugin": true

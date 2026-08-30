@@ -234,7 +234,7 @@ class IceProtocolParserTest extends TestCase
     {
         $uri = $this->parseUri('stun:stun.services.mozilla.com');
         $this->assertEquals(
-            ['host' => 'stun.services.mozilla.com', 'port' => 3478, 'scheme' => 'stun'],
+            ['host' => 'stun.services.mozilla.com', 'port' => 3478, 'scheme' => 'stun', 'transport' => null],
             (array)$uri
         );
     }
@@ -243,7 +243,7 @@ class IceProtocolParserTest extends TestCase
     {
         $uri = $this->parseUri('stuns:stun.services.mozilla.com');
         $this->assertEquals(
-            ['host' => 'stun.services.mozilla.com', 'port' => 5349, 'scheme' => 'stuns'],
+            ['host' => 'stun.services.mozilla.com', 'port' => 5349, 'scheme' => 'stuns', 'transport' => null],
             (array)$uri
         );
     }
@@ -252,7 +252,7 @@ class IceProtocolParserTest extends TestCase
     {
         $uri = $this->parseUri('stun:stun.l.google.com:19302');
         $this->assertEquals(
-            ['host' => 'stun.l.google.com', 'port' => 19302, 'scheme' => 'stun'],
+            ['host' => 'stun.l.google.com', 'port' => 19302, 'scheme' => 'stun', 'transport' => null],
             (array)$uri
         );
     }

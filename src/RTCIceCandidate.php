@@ -14,6 +14,8 @@ namespace Webrtc\ICE;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\CandidateType;
 use Webrtc\ICE\Enum\TransportType;
+use Webrtc\STUN\IceCandidateInterface;
+use Override;
 
 /**
  * RTCIceCandidate - ICE Candidate Representation
@@ -32,7 +34,7 @@ use Webrtc\ICE\Enum\TransportType;
  * @see https://datatracker.ietf.org/doc/html/rfc8445 ICE RFC 8445
  * @api
  */
-class RTCIceCandidate
+class RTCIceCandidate implements IceCandidateInterface
 {
     private string $protocolId;
     private string $host;
@@ -68,6 +70,7 @@ class RTCIceCandidate
      *
      * @return int
      */
+    #[Override]
     public function getComponentId(): int
     {
         return $this->componentId;
@@ -78,6 +81,7 @@ class RTCIceCandidate
      *
      * @return string
      */
+    #[Override]
     public function getHost(): string
     {
         return $this->host;
@@ -118,6 +122,7 @@ class RTCIceCandidate
      *
      * @return int
      */
+    #[Override]
     public function getPort(): int
     {
         return $this->port;
