@@ -2301,8 +2301,11 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     public function __unserialize(array $data): void
     {
         $restartConsent = false;
+        /**
+         * @var mixed $value
+         */
         foreach ($data as $key => $value) {
-            if (is_string($key) && str_ends_with($key, "\0queryConsentTimer")) {
+            if (str_ends_with($key, "\0queryConsentTimer")) {
                 $restartConsent = $value === true;
                 $data[$key] = null;
             }
