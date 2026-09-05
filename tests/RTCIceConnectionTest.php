@@ -242,12 +242,10 @@ class RTCIceConnectionTest extends TestCase
         delay(1);
         async(fn() => $connection2->connect())->ignore();
 
-        $connection1->sendData('Hello');
-        $this->waitForData($data2);
+        $this->sendUntilReceived($connection1, 'Hello', $data2);
         $this->assertEquals('Hello', $data2[0][0]);
 
-        $connection2->sendData('Bye');
-        $this->waitForData($data1);
+        $this->sendUntilReceived($connection2, 'Bye', $data1);
         $this->assertEquals('Bye', $data1[0][0]);
 
         $connection1->close();
@@ -1482,6 +1480,31 @@ class RTCIceConnectionTest extends TestCase
         $deadline = microtime(true) + $timeout;
         while (!isset($data[0]) && microtime(true) < $deadline) {
             delay(.01);
+        }
+    }
+
+    /**
+     * Resends a payload until the peer reports it, so early-check delivery does not
+     * depend on the exact moment nomination completes. Until the pair is nominated
+     * sendData() raises "No Connection"; datagrams sent right after nomination can
+     * also be dropped. Both are expected on slow CI nodes, so the send is retried
+     * until the datagram is observed or the deadline passes.
+     */
+    private function sendUntilReceived(
+        RTCIceConnection $from,
+        string $payload,
+        array &$dest,
+        int $componentId = 1,
+        float $timeout = 10.0,
+    ): void {
+        $deadline = microtime(true) + $timeout;
+        while (!isset($dest[0]) && microtime(true) < $deadline) {
+            try {
+                $from->sendData($payload, $componentId);
+            } catch (RuntimeException) {
+                // Not nominated yet; keep polling until the pair is ready.
+            }
+            delay(.05);
         }
     }
 
