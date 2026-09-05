@@ -246,7 +246,23 @@ class RTCIceConnectionTest extends TestCase
         $connect1 = async(fn() => $connection1->connect());
         delay(1);
         $connect2 = async(fn() => $connection2->connect());
-        await([$connect1, $connect2]);
+        try {
+            await([$connect1, $connect2]);
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "\n=== EARLYCHECK DIAG: " . $e->getMessage() . " ===\n");
+            foreach (['conn1' => $connection1, 'conn2' => $connection2] as $name => $conn) {
+                fwrite(STDERR, "$name locals:\n");
+                foreach ($conn->getLocalCandidates() as $c) {
+                    fwrite(STDERR, "  " . $c->getType()->name . " " . $c->getHost() . ":" . $c->getPort() . "\n");
+                }
+                fwrite(STDERR, "$name checklist:\n");
+                foreach ($conn->getCheckList() as $p) {
+                    fwrite(STDERR, "  " . $p . "\n");
+                }
+            }
+            fwrite(STDERR, "=== END DIAG ===\n");
+            throw $e;
+        }
 
         $connection1->sendData('Hello');
         $this->waitForData($data2);
