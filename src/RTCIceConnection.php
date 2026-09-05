@@ -1416,6 +1416,14 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return;
         }
 
+        // tryCheckBinding leaves isBindingWait set when a check is already in flight (a
+        // triggered check from processEarlyChecks starts one before bindCheck runs).
+        // Failing here would abort ICE while that transaction is still outstanding — the
+        // race that makes the early-check exchange fail on runners slower than loopback.
+        if ($this->isBindingWait) {
+            return;
+        }
+
         if ($this->tryFailedCount > self::RETRY_BINDING_MAX) {
             $this->settleBindingCheck(new RuntimeException("Binding check failed"));
         }
@@ -1455,9 +1463,16 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return false;
         }
 
-        // Nothing was started, so no check is outstanding. The flag means "a check is in
-        // flight" and is otherwise only cleared when a pair reaches a terminal state, so
-        // leaving it set here makes every later tick return early and the exchange stalls.
+        // Nothing new was started. If a check is already in flight (typical for early
+        // Binding requests processed just before bindCheck), a connectivity check is
+        // outstanding: wait for its response instead of declaring the checklist failed.
+        if (array_any($this->checkList, fn($p) => $p->getState() === RTCIceCandidatePairStats::IN_PROGRESS)) {
+            return false;
+        }
+
+        // No check is outstanding. The flag means "a check is in flight" and is
+        // otherwise only cleared when a pair reaches a terminal state, so leaving
+        // it set here makes every later tick return early and the exchange stalls.
         $this->isBindingWait = false;
 
         if (empty($this->checkList)) {
