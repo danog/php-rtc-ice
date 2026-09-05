@@ -88,6 +88,10 @@ class RTCIceConnectionTest extends TestCase
             ],
             $config,
         );
+        if (PHP_OS_FAMILY === 'Windows') {
+            $config = preg_replace('~^syslog\s*$~m', '', (string) $config) ?? (string) $config;
+            $config .= "\nlistening-ip=127.0.0.1\nrelay-ip=127.0.0.1\nexternal-ip=127.0.0.1\n";
+        }
         if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
             throw new \RuntimeException('Could not write the temporary Coturn test configuration.');
         }
@@ -1135,14 +1139,11 @@ class RTCIceConnectionTest extends TestCase
 
     public function testAddRemoteCandidateMdnsGood()
     {
-        if (!Multicast::isAvailable()) {
-            $this->markTestSkipped(Multicast::skipReason());
-        }
-
-        $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20']);
-        $mdnsMock->start();
+        $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20'], '127.0.0.1:0');
+        $bound = $mdnsMock->start();
 
         $connection = $this->getIceConnection();
+        $connection->setMdnsFactory(new \Webrtc\MDNS\Factory(new \Webrtc\MDNS\MulticastExecutor($bound)));
 
         $remoteCandidate = new RTCIceCandidate(1);
         $remoteCandidate->setFoundation('foundation');

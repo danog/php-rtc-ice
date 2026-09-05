@@ -31,6 +31,13 @@ use Webrtc\MDNS\Factory;
  */
 trait Mdns
 {
+    private ?Factory $mdnsFactory = null;
+
+    public function setMdnsFactory(?Factory $factory): void
+    {
+        $this->mdnsFactory = $factory;
+    }
+
     /**
      * Resolve an mDNS .local domain to its IPv4 address
      *
@@ -50,7 +57,7 @@ trait Mdns
      */
     private function resolveMdns(string $domain): string|false
     {
-        $factory = new Factory();
+        $factory = $this->mdnsFactory ?? new Factory();
         $resolver = $factory->createResolver();
 
         try {
