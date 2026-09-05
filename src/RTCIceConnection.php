@@ -75,6 +75,18 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var int Maximum number of binding retry attempts */
     private const RETRY_BINDING_MAX = 10;
 
+    /**
+     * @var int Retransmissions for a single connectivity-check transaction.
+     *
+     * A connectivity check is a STUN request and, per RFC 5389/8445, must be
+     * retransmitted rather than abandoned after one lost datagram. With host-only
+     * candidates there is a single pair, so a check that is dropped or answered
+     * late — routine on loaded CI runners — would otherwise fail the pair and, with
+     * nothing else to try, fail the whole negotiation. Retransmitting lets the check
+     * ride out a transient loss before the pair is declared failed.
+     */
+    private const CHECK_RETRANSMISSIONS = 3;
+
     /** @var int Maximum number of consent failures before closing */
     private const CONSENT_FAILURES = 6;
 
@@ -1250,7 +1262,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         // concurrently and the check list has to keep moving while each is outstanding.
         async(function () use ($pair, $message, $remoteAddress, $nominate): void {
             try {
-                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword, self::CHECK_RETRANSMISSIONS);
                 if ($address === null) {
                     $this->markPairFailed($pair);
                     return;
