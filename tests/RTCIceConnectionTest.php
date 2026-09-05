@@ -759,6 +759,28 @@ class RTCIceConnectionTest extends TestCase
 
         $this->inviteAccept($connection1, $connection2);
 
+        $server = self::localServerHost();
+        fwrite(STDERR, "\n[DIAG2] localServerHost=$server\n");
+        fwrite(STDERR, "[DIAG2] conn1 candidates: ");
+        foreach ($connection1->getLocalCandidates() as $c) {
+            fwrite(STDERR, $c->getType()->name . '@' . $c->getHost() . ':' . $c->getPort() . ' ');
+        }
+        fwrite(STDERR, "\n");
+        // Manual STUN binding request to the server over UDP from each host candidate address.
+        $txid = random_bytes(12);
+        $req = pack('n2N', 0x0001, 0x0000, 0x2112A442) . $txid;
+        foreach (['0.0.0.0', $server] as $bindHost) {
+            $sock = @stream_socket_server("udp://$bindHost:0", $en, $es, STREAM_SERVER_BIND);
+            if ($sock === false) { fwrite(STDERR, "[DIAG2] bind $bindHost fail: $es\n"); continue; }
+            $ok = @stream_socket_sendto($sock, $req, 0, "$server:3478");
+            $r = [$sock]; $w = $x = [];
+            $got = @stream_select($r, $w, $x, 2);
+            $resp = $got ? @stream_socket_recvfrom($sock, 128, 0, $from) : false;
+            fwrite(STDERR, "[DIAG2] bound=$bindHost sendto=$ok resp=" . ($resp !== false && $resp !== '' ? bin2hex(substr($resp, 0, 8)) . " from $from" : 'NONE') . "\n");
+            fclose($sock);
+        }
+        fwrite(STDERR, "[DIAG2] turnserver log:\n" . (self::$turnServerLog ? (string) @file_get_contents(self::$turnServerLog) : 'no log') . "\n");
+
         $this->assertCandidateTypes($connection1, ['host', 'srflx']);
         $this->assertCandidateTypes($connection2, ['host']);
 
