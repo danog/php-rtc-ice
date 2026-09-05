@@ -75,16 +75,6 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var int Maximum number of binding retry attempts */
     private const RETRY_BINDING_MAX = 10;
 
-    /**
-     * @var int Retransmissions for a single connectivity-check transaction.
-     *
-     * A connectivity check is a STUN Binding request and, per RFC 5389/8445,
-     * must be retransmitted rather than abandoned after one lost datagram.
-     * With a single working pair, a check that is dropped or answered late
-     * would otherwise fail that pair and, if nothing else remains, fail ICE.
-     */
-    private const CHECK_RETRANSMISSIONS = 3;
-
     /** @var int Maximum number of consent failures before closing */
     private const CONSENT_FAILURES = 6;
 
@@ -550,10 +540,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return $this->createCandidate($stun->getId(), $mappedAddress->getAddress(), $mappedAddress->getPort(), $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
         } catch (Throwable $e) {
             $this->logger?->error(sprintf("Could not request stun server: %s - %s", $e->getMessage(), implode(":", $stunServer)));
-            // The same Stun instance still owns the host-candidate socket. Closing it
-            // here would destroy the only working local transport when srflx gathering
-            // fails (unreachable STUN server, timeout, DNS error), which is exactly
-            // the default-STUN path used by RTCPeerConnection.
+            $stun->close();
             return false;
         }
     }
@@ -1206,7 +1193,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         // and must not stall on one pair's transaction.
         async(function () use ($pair, $message, $remoteAddress): void {
             try {
-                $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword, self::CHECK_RETRANSMISSIONS);
+                $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
                 $pair->setNominated(true);
                 $this->markPairSucceeded($pair);
             } catch (Throwable) {
@@ -1263,7 +1250,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         // concurrently and the check list has to keep moving while each is outstanding.
         async(function () use ($pair, $message, $remoteAddress, $nominate): void {
             try {
-                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword, self::CHECK_RETRANSMISSIONS);
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
                 if ($address === null) {
                     $this->markPairFailed($pair);
                     return;
@@ -1407,12 +1394,14 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return;
         }
 
-        if (isset($this->checkListState)) {
-            if ($this->checkListState === CheckListState::ICE_COMPLETED) {
-                $this->settleBindingCheck();
-                return;
-            }
+        if (isset($this->checkListState) && $this->checkListState === CheckListState::ICE_COMPLETED) {
+            $this->settleBindingCheck();
+            return;
+        }
 
+        if ((isset($this->checkListState) && $this->checkListState === CheckListState::ICE_FAILED)
+            || $this->tryFailedCount > self::RETRY_BINDING_MAX
+        ) {
             $this->settleBindingCheck(new RuntimeException("Binding check failed"));
             return;
         }
@@ -1424,13 +1413,6 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->isBindingWait = true;
         if ($this->tryCheckBinding()) {
             $this->settleBindingCheck();
-            return;
-        }
-
-        // A pair was started, so isBindingWait is still true. Do not treat earlier
-        // pair failures as a reason to abort: remaining WAITING/FROZEN pairs must
-        // still be checked (macOS runners enumerate many unusable IPv6 interfaces).
-        if ($this->isBindingWait) {
             return;
         }
 

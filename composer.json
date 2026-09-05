@@ -34,7 +34,7 @@
         "amphp/dns": "^2.4",
         "danog/php-rtc-exception": "^1.0",
         "danog/php-rtc-turn": "^1.1.1",
-        "danog/php-rtc-stun": "^1.1.8",
+        "danog/php-rtc-stun": "^1.1.1",
         "danog/php-rtc-mdns": "^1.0",
         "psr/log": "^3.0",
         "symfony/polyfill-php84": "*"

@@ -21,7 +21,7 @@ use Webrtc\ICE\Utils;
  *
  * Key Features:
  * - Retrieves all available network interface addresses
- * - Filters loopback and link-local addresses (those cannot form working ICE pairs)
+ * - Filters loopback addresses (127.0.0.1 and ::1)
  * - Supports both IPv4 and IPv6 addresses
  * - Includes address caching mechanism
  * - Provides filtered results based on protocol preferences
@@ -59,14 +59,14 @@ trait NetworkAdapter
      * Retrieve and process addresses from network interfaces
      *
      * Collects all unicast addresses from available network interfaces,
-     * excluding loopback and link-local addresses, and organizes them by IP version.
+     * excluding loopback addresses, and organizes them by IP version.
      * IPv6 addresses are enclosed in square brackets for URI compatibility.
      *
      * @return array<string, array<int, string>> Array of addresses grouped by IP version (v4, v6)
      *
      * @example
      * $addresses = $this->getHostFromNetworkAdapter();
-     * // Returns ['v4' => ['192.168.1.2'], 'v6' => ['[2001:db8::1]']]
+     * // Returns ['v4' => ['192.168.1.2'], 'v6' => ['[fe80::1]']]
      */
     private function getHostFromNetworkAdapter(): array
     {
@@ -83,45 +83,19 @@ trait NetworkAdapter
                     continue;
                 }
 
-                if ($this->isUnusableHostAddress($address)) {
-                    continue;
-                }
+                if (!in_array($address, ["127.0.0.1", "::1"], true)) {
+                    $version = Utils::IPVersion($address);
+                    if ($version === false) {
+                        continue;
+                    }
 
-                $version = Utils::IPVersion($address);
-                if ($version === false) {
-                    continue;
+                    $hostAddresses[$version === 6 ? "v6" : "v4"][] = $version === 6 ? "[$address]" : $address;
                 }
-
-                $hostAddresses[$version === 6 ? "v6" : "v4"][] = $version === 6 ? "[$address]" : $address;
             }
         }
 
         $this->hostAddressCache = $hostAddresses;
         return $hostAddresses;
-    }
-
-    /**
-     * Whether an address should be omitted from host candidate gathering.
-     *
-     * Loopback is never a useful ICE host address for a remote peer. IPv6
-     * link-local addresses (fe80::/10) require a zone index that ICE SDP does
-     * not carry, and macOS in particular enumerates many such interfaces
-     * (awdl, llw, utun). Checking them first — they have the same host type
-     * preference as a real IPv6 address — burns through the checklist and can
-     * fail ICE before a working IPv4 pair is tried. IPv4 link-local (169.254/16)
-     * is equally unusable without extra context.
-     */
-    private function isUnusableHostAddress(string $address): bool
-    {
-        if (in_array($address, ['127.0.0.1', '::1'], true)) {
-            return true;
-        }
-
-        if (str_starts_with($address, '169.254.')) {
-            return true;
-        }
-
-        return str_starts_with(strtolower($address), 'fe80:');
     }
 
     /**
