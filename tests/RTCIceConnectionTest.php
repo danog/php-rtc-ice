@@ -1137,6 +1137,10 @@ class RTCIceConnectionTest extends TestCase
 
     public function testAddRemoteCandidateMdnsBad()
     {
+        if (!Multicast::isAvailable()) {
+            $this->markTestSkipped(Multicast::skipReason());
+        }
+
         $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20']);
         $mdnsMock->start();
 
