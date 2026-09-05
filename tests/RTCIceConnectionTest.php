@@ -89,9 +89,9 @@ class RTCIceConnectionTest extends TestCase
             $config,
         );
         if (DIRECTORY_SEPARATOR === '\\') {
-            // The Cygwin coturn build does not enumerate Windows interfaces, so it binds no
-            // UDP listener by default; name loopback and the primary LAN address explicitly.
-            $config .= "\nlistening-ip=127.0.0.1\nlistening-ip=" . self::localServerHost() . "\n";
+            // DIAG2: strip syslog/simple-log so coturn logs to the captured file, add verbose.
+            $config = preg_replace(['~^syslog$~m', '~^simple-log$~m'], ['', ''], (string) $config);
+            $config .= "\nlistening-ip=127.0.0.1\nlistening-ip=" . self::localServerHost() . "\nverbose\nno-tls\nno-dtls\n";
         }
         if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
             throw new \RuntimeException('Could not write the temporary Coturn test configuration.');
