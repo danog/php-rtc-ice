@@ -1458,19 +1458,24 @@ class RTCIceConnectionTest extends TestCase
             return '127.0.0.1';
         }
 
-        // Connecting a UDP socket sends nothing but makes the OS pick the primary source
-        // address for the default route, which is the address ICE gathers as a host candidate.
-        $probe = @stream_socket_client('udp://192.0.2.1:9', $errno, $errstr);
-        if ($probe === false) {
-            return '127.0.0.1';
+        // Return the first non-loopback IPv4, the same address ICE gathers as its first host
+        // candidate, so the socket bound to it can reach the server (bound to all interfaces)
+        // at that address.
+        $interfaces = net_get_interfaces();
+        foreach ($interfaces === false ? [] : $interfaces as $interface) {
+            /** @var array{unicast?: array<int, array{address?: string}>} $interface */
+            foreach ($interface['unicast'] ?? [] as $unicast) {
+                $address = $unicast['address'] ?? null;
+                if (is_string($address)
+                    && $address !== '127.0.0.1'
+                    && filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+                ) {
+                    return $address;
+                }
+            }
         }
-        $name = (string) stream_socket_get_name($probe, false);
-        fclose($probe);
 
-        $colon = strrpos($name, ':');
-        $host = $colon === false ? $name : substr($name, 0, $colon);
-
-        return $host !== '' ? $host : '127.0.0.1';
+        return '127.0.0.1';
     }
 
     private function assertCandidateTypes(RTCIceConnection $conn, array $expected): void
