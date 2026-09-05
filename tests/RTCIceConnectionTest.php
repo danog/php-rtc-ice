@@ -455,6 +455,7 @@ class RTCIceConnectionTest extends TestCase
             ->setConstructorArgs([$this->config])
             ->onlyMethods(['onRequestReceived'])
             ->getMock();
+        $this->bindLoopback($connection2);
 
         $onRequestReceivedMock = function (MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol, string $data) use ($connection2) {
             if ($message->attributes()->has(MessageAttribute::USE_CANDIDATE)) {
@@ -1007,6 +1008,7 @@ class RTCIceConnectionTest extends TestCase
             ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['periodicConsentCheck'])
             ->getMock();
+        $this->bindLoopback($connection1);
 
         $periodicConsentCheckMock = function () use ($connection1) {
             $failureCount = 0;
@@ -1057,6 +1059,7 @@ class RTCIceConnectionTest extends TestCase
             ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['periodicConsentCheck'])
             ->getMock();
+        $this->bindLoopback($connection1);
 
         $periodicConsentCheckMock = function () use ($connection1) {
             $failureCount = 0;
@@ -1450,13 +1453,19 @@ class RTCIceConnectionTest extends TestCase
     private function getIceConnection(bool $iceControlling = true): RTCIceConnection
     {
         $connection = new RTCIceConnection($this->config, $iceControlling ? IceRole::Controlling : IceRole::Controlled);
-        // Same-process tests must talk over loopback. Using the machine's LAN
-        // addresses makes macOS pick a different UDP source IP for the Binding
-        // response than the one in the remote candidate, so the check is
-        // discarded and ICE fails. 127.0.0.1 has a stable source on every OS.
-        $connection->setNat1to1(['127.0.0.1']);
+        $this->bindLoopback($connection);
 
         return $connection;
+    }
+
+    /**
+     * Same-process tests talk over loopback. LAN addresses make some OSes (macOS,
+     * Windows) send Binding responses from a different source IP than the remote
+     * candidate, so the check is discarded.
+     */
+    private function bindLoopback(RTCIceConnection $connection): void
+    {
+        $connection->setNat1to1(['127.0.0.1']);
     }
 
     private function inviteAccept(RTCIceConnection $connection1, RTCIceConnection $connection2): void
