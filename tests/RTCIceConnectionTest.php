@@ -759,6 +759,23 @@ class RTCIceConnectionTest extends TestCase
 
         $this->inviteAccept($connection1, $connection2);
 
+        fwrite(STDERR, "\n[DIAG STUN] conn1 candidates: ");
+        foreach ($connection1->getLocalCandidates() as $c) {
+            fwrite(STDERR, $c->getType()->name . '@' . $c->getHost() . ':' . $c->getPort() . ' ');
+        }
+        fwrite(STDERR, "\n[DIAG STUN] turnserver log:\n" . (self::$turnServerLog ? (string) @file_get_contents(self::$turnServerLog) : 'no log') . "\n");
+        // Probe LAN-bound -> loopback UDP reachability, the suspected Windows gap.
+        $lan = $connection1->getLocalCandidates()[0] ?? null;
+        if ($lan !== null) {
+            $probe = @stream_socket_server('udp://' . $lan->getHost() . ':0', $en, $es, STREAM_SERVER_BIND);
+            fwrite(STDERR, "[DIAG STUN] probe bind " . $lan->getHost() . " => " . ($probe !== false ? 'ok' : "fail $es") . "\n");
+            if ($probe !== false) {
+                $sent = @stream_socket_sendto($probe, 'x', 0, '127.0.0.1:3478');
+                fwrite(STDERR, "[DIAG STUN] sendto 127.0.0.1:3478 => " . var_export($sent, true) . "\n");
+                fclose($probe);
+            }
+        }
+
         $this->assertCandidateTypes($connection1, ['host', 'srflx']);
         $this->assertCandidateTypes($connection2, ['host']);
 
