@@ -37,7 +37,7 @@
         "danog/php-rtc-stun": "^1.1.8",
         "danog/php-rtc-mdns": "^1.1.7",
         "psr/log": "^3.0.2",
-        "symfony/polyfill-php84": ">=1.38.1"
+        "symfony/polyfill-php84": "*"
     },
     "require-dev": {
         "mockery/mockery": "^1.6.15",
