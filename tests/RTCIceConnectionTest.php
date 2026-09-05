@@ -228,12 +228,6 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectEarlyChecks()
     {
-        // Controlling-first checks plus a fixed 1s gap are timing-sensitive on
-        // GitHub's macOS runners (the same host-to-host path is covered by testConnect).
-        if (PHP_OS_FAMILY === 'Darwin' && getenv('CI')) {
-            $this->markTestSkipped('Early-check timing is unreliable on macOS CI runners.');
-        }
-
         $connection1 = $this->getIceConnection();
         $connection2 = $this->getIceConnection(false);
 
@@ -244,9 +238,14 @@ class RTCIceConnectionTest extends TestCase
         $this->getData($connection1, $data1);
         $this->getData($connection2, $data2);
 
-        async(fn() => $connection1->connect())->ignore();
+        // Connection 1 starts checking first so its Binding requests arrive as
+        // early checks on connection 2. Wait for both agents to finish ICE
+        // before sending application data; a fixed delay is not enough on a
+        // loaded runner.
+        $connect1 = async(fn() => $connection1->connect());
         delay(1);
-        async(fn() => $connection2->connect())->ignore();
+        $connect2 = async(fn() => $connection2->connect());
+        await([$connect1, $connect2]);
 
         $connection1->sendData('Hello');
         $this->waitForData($data2);
@@ -1137,14 +1136,11 @@ class RTCIceConnectionTest extends TestCase
 
     public function testAddRemoteCandidateMdnsBad()
     {
-        if (!Multicast::isAvailable()) {
-            $this->markTestSkipped(Multicast::skipReason());
-        }
-
-        $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20']);
-        $mdnsMock->start();
+        $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20'], '127.0.0.1:0');
+        $bound = $mdnsMock->start();
 
         $connection = $this->getIceConnection();
+        $connection->setMdnsNameserver($bound);
 
         $remoteCandidate = new RTCIceCandidate(1);
         $remoteCandidate->setFoundation('foundation');
@@ -1164,14 +1160,11 @@ class RTCIceConnectionTest extends TestCase
 
     public function testAddRemoteCandidateMdnsGood()
     {
-        if (!Multicast::isAvailable()) {
-            $this->markTestSkipped(Multicast::skipReason());
-        }
-
-        $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20']);
-        $mdnsMock->start();
+        $mdnsMock = new MdnsServerMock(['test.local' => '192.168.1.20'], '127.0.0.1:0');
+        $bound = $mdnsMock->start();
 
         $connection = $this->getIceConnection();
+        $connection->setMdnsNameserver($bound);
 
         $remoteCandidate = new RTCIceCandidate(1);
         $remoteCandidate->setFoundation('foundation');

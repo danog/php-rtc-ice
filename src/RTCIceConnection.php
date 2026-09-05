@@ -540,7 +540,10 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return $this->createCandidate($stun->getId(), $mappedAddress->getAddress(), $mappedAddress->getPort(), $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
         } catch (Throwable $e) {
             $this->logger?->error(sprintf("Could not request stun server: %s - %s", $e->getMessage(), implode(":", $stunServer)));
-            $stun->close();
+            // Leave the socket open: it still owns the host candidate. Closing it
+            // here would drop host connectivity whenever srflx gathering fails
+            // (unreachable STUN server, timeout, DNS), which is the default
+            // RTCPeerConnection configuration.
             return false;
         }
     }

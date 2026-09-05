@@ -14,6 +14,7 @@ namespace Webrtc\ICE\Trait;
 use RuntimeException;
 use Throwable;
 use Webrtc\MDNS\Factory;
+use Webrtc\MDNS\MulticastExecutor;
 
 /**
  * mDNS (Multicast DNS) Resolution Trait
@@ -31,6 +32,21 @@ use Webrtc\MDNS\Factory;
  */
 trait Mdns
 {
+    /** @var string|null Override for the mDNS nameserver (tests bind a loopback responder). */
+    private ?string $mdnsNameserver = null;
+
+    /**
+     * Point mDNS resolution at a specific nameserver.
+     *
+     * Production uses 224.0.0.251:5353. Tests bind a unicast loopback responder
+     * because Windows cannot bind a datagram socket to the multicast group
+     * (WSAEADDRNOTAVAIL) and many hosts do not deliver group traffic locally.
+     */
+    public function setMdnsNameserver(?string $nameserver): void
+    {
+        $this->mdnsNameserver = $nameserver;
+    }
+
     /**
      * Resolve an mDNS .local domain to its IPv4 address
      *
@@ -50,7 +66,10 @@ trait Mdns
      */
     private function resolveMdns(string $domain): string|false
     {
-        $factory = new Factory();
+        $executor = $this->mdnsNameserver !== null
+            ? new MulticastExecutor($this->mdnsNameserver)
+            : null;
+        $factory = new Factory($executor);
         $resolver = $factory->createResolver();
 
         try {

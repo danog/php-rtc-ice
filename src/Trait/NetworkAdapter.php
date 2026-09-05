@@ -83,19 +83,42 @@ trait NetworkAdapter
                     continue;
                 }
 
-                if (!in_array($address, ["127.0.0.1", "::1"], true)) {
-                    $version = Utils::IPVersion($address);
-                    if ($version === false) {
-                        continue;
-                    }
-
-                    $hostAddresses[$version === 6 ? "v6" : "v4"][] = $version === 6 ? "[$address]" : $address;
+                if ($this->isUnusableHostAddress($address)) {
+                    continue;
                 }
+
+                $version = Utils::IPVersion($address);
+                if ($version === false) {
+                    continue;
+                }
+
+                $hostAddresses[$version === 6 ? "v6" : "v4"][] = $version === 6 ? "[$address]" : $address;
             }
         }
 
         $this->hostAddressCache = $hostAddresses;
         return $hostAddresses;
+    }
+
+    /**
+     * Addresses that cannot form a working ICE pair on this host.
+     *
+     * Loopback is never useful to a remote peer. IPv6 link-local (fe80::/10)
+     * needs a zone index that ICE SDP does not carry; macOS enumerates many
+     * such interfaces (awdl, llw, utun) and they would otherwise be checked
+     * first. IPv4 link-local (169.254/16) is the same class of address.
+     */
+    private function isUnusableHostAddress(string $address): bool
+    {
+        if (in_array($address, ['127.0.0.1', '::1'], true)) {
+            return true;
+        }
+
+        if (str_starts_with($address, '169.254.')) {
+            return true;
+        }
+
+        return str_starts_with(strtolower($address), 'fe80:');
     }
 
     /**
