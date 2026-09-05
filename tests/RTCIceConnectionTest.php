@@ -1426,14 +1426,33 @@ class RTCIceConnectionTest extends TestCase
     }
 
     /**
-     * Loopback address of the test-managed Coturn server.
+     * The address at which the test-managed Coturn (bound to every interface) is reachable
+     * from an ICE host-candidate socket.
      *
-     * GitHub's Windows runners use the strong host model and a public-profile firewall, so a
-     * socket bound to a LAN host-candidate address cannot reach 127.0.0.1 until those are
-     * configured (see .github/workflows/tests.yml). After that, this is 127.0.0.1 everywhere.
+     * On POSIX that is loopback. Windows uses the strong host model: a socket bound to a LAN
+     * host-candidate address cannot send to 127.0.0.1. With the CI firewall disabled, the
+     * host's own primary IPv4 is reachable from those sockets (same-interface hairpin).
      */
     private static function localServerHost(): string
     {
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            return '127.0.0.1';
+        }
+
+        $interfaces = net_get_interfaces();
+        foreach ($interfaces === false ? [] : $interfaces as $interface) {
+            /** @var array{unicast?: array<int, array{address?: string}>} $interface */
+            foreach ($interface['unicast'] ?? [] as $unicast) {
+                $address = $unicast['address'] ?? null;
+                if (is_string($address)
+                    && $address !== '127.0.0.1'
+                    && filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+                ) {
+                    return $address;
+                }
+            }
+        }
+
         return '127.0.0.1';
     }
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Webrtc\ICE;
 
+use Amp\ByteStream\ResourceStream;
 use Amp\Socket\UdpSocket;
 use LibDNS\Decoder\DecoderFactory;
 use LibDNS\Encoder\EncoderFactory;
@@ -32,17 +33,16 @@ class MdnsServerMock
 
     public function start(): string
     {
-        // Windows rejects binding a socket directly to a multicast group address
-        // (WSAEADDRNOTAVAIL). Group delivery does not reach loopback on CI anyway, so the
-        // responder is only exercised where multicast genuinely works (the Good test guards
-        // on Multicast::isAvailable()); elsewhere a wildcard bind on the same port keeps the
-        // mock constructible so the resolution-failure paths can still run.
+        // Bind 0.0.0.0 and join 224.0.0.251, the same way an mDNS responder works.
+        // Binding the socket to the group address itself is rejected on Windows
+        // (WSAEADDRNOTAVAIL) and does not join the group on Linux.
+        $port = substr($this->address, strrpos($this->address, ':') ?: 0);
         try {
             $this->server = bindUdpSocket($this->address);
         } catch (\Amp\Socket\SocketException) {
-            $port = substr($this->address, strrpos($this->address, ':') ?: 0);
             $this->server = bindUdpSocket('0.0.0.0' . $port);
         }
+        $this->joinMulticastGroup();
 
         $decoder = (new DecoderFactory())->create();
         $encoder = (new EncoderFactory())->create();
@@ -99,5 +99,35 @@ class MdnsServerMock
     {
         $this->server?->close();
         $this->server = null;
+    }
+
+    /**
+     * Join 224.0.0.251 on the bound UDP socket so group datagrams are delivered.
+     */
+    private function joinMulticastGroup(): void
+    {
+        if (!$this->server instanceof ResourceStream) {
+            return;
+        }
+
+        if (!extension_loaded('sockets') || !function_exists('socket_import_stream')) {
+            return;
+        }
+
+        $resource = $this->server->getResource();
+        if (!is_resource($resource)) {
+            return;
+        }
+
+        $socket = @socket_import_stream($resource);
+        if ($socket === false) {
+            return;
+        }
+
+        $membership = ['group' => '224.0.0.251', 'interface' => '0.0.0.0'];
+        if (@socket_set_option($socket, IPPROTO_IP, MCAST_JOIN_GROUP, $membership) === false) {
+            @socket_set_option($socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, $membership);
+        }
+        @socket_set_option($socket, IPPROTO_IP, IP_MULTICAST_LOOP, 1);
     }
 }

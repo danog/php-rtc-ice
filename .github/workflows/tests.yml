@@ -26,6 +26,7 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           tools: composer:v2
+          extensions: sockets
 
       - name: Validate composer.json and composer.lock
         run: composer validate
@@ -46,13 +47,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo ip link set lo multicast on
-          sudo ip route replace 224.0.0.0/4 dev lo || true
           sudo sysctl -w net.ipv4.conf.all.rp_filter=0
           sudo sysctl -w net.ipv4.conf.default.rp_filter=0
           sudo sysctl -w net.ipv4.conf.lo.rp_filter=0
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
           # Unique-local on loopback so ICE can gather a non-::1 IPv6 host candidate.
           sudo ip -6 addr add fd00:1:2:3::1/128 dev lo || true
+          # Dummy NIC with multicast so group traffic is delivered locally
+          # (loopback has no MULTICAST flag on GitHub-hosted Ubuntu).
+          sudo ip link add mdns0 type dummy
+          sudo ip link set mdns0 up multicast on
+          sudo ip addr add 172.31.255.1/24 dev mdns0
+          sudo ip route replace 224.0.0.0/4 dev mdns0
+          sudo sysctl -w net.ipv4.conf.mdns0.rp_filter=0
+          sudo sysctl -w net.ipv4.conf.mdns0.mc_forwarding=1 || true
 
       - name: Configure macOS network (multicast, IPv6, firewall)
         if: matrix.os == 'macos-latest'
@@ -66,12 +74,12 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Continue'
-          # Host-candidate sockets bind a LAN address. Windows defaults to the strong
-          # host model, so those sockets cannot reach 127.0.0.1 (where Coturn listens)
-          # and the public-profile firewall drops the hairpin STUN/TURN datagrams.
-          # Linux already allows this path; enable the same behaviour here.
+          $ErrorActionPreference = 'Stop'
+          # Host-candidate sockets bind a LAN address. The public-profile firewall
+          # drops hairpin UDP to that address (Coturn / mDNS / ICE checks), which
+          # Linux does not. Disable it so the same-interface path works.
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+          Get-NetFirewallProfile | Format-Table Name, Enabled
           Get-NetIPInterface | ForEach-Object {
             Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex `
               -WeakHostSend Enabled -WeakHostReceive Enabled -ErrorAction SilentlyContinue

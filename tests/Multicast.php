@@ -5,12 +5,11 @@ namespace Tests\Webrtc\ICE;
 /**
  * Decides whether multicast responses can actually reach this host.
  *
- * mDNS only works if a datagram sent to 224.0.0.251 comes back to a socket bound to the
- * group on the same machine. That is a property of the network stack as the current process
- * sees it, and it is normally only absent in constrained environments where group traffic is
- * dropped (isolated containers, some CI networks). The check probes the socket directly, in
- * the current network namespace, rather than guessing from host state such as /proc or /sys,
- * so it reflects the environment the tests will actually run in.
+ * mDNS sends to 224.0.0.251 and receives on a socket that has joined that group
+ * (RFC 6762). Binding the socket to the group address itself is not how the
+ * protocol works, and it fails on GitHub-hosted runners (Windows rejects it;
+ * Linux loopback often has no MULTICAST flag). Joining the group on 0.0.0.0
+ * matches the production resolver and the dummy/ethernet interfaces CI enables.
  */
 final class Multicast
 {
@@ -33,6 +32,82 @@ final class Multicast
     }
 
     private static function probe(): bool
+    {
+        if (extension_loaded('sockets') && self::probeWithSockets()) {
+            return true;
+        }
+
+        return self::probeWithStreams();
+    }
+
+    /**
+     * Bind 0.0.0.0, join 224.0.0.251, send a datagram to the group, see if it arrives.
+     */
+    private static function probeWithSockets(): bool
+    {
+        $port = 5354;
+        $receiver = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+        if ($receiver === false) {
+            return false;
+        }
+
+        socket_set_option($receiver, SOL_SOCKET, SO_REUSEADDR, 1);
+        if (defined('SO_REUSEPORT')) {
+            @socket_set_option($receiver, SOL_SOCKET, SO_REUSEPORT, 1);
+        }
+
+        if (!@socket_bind($receiver, '0.0.0.0', $port)) {
+            socket_close($receiver);
+
+            return false;
+        }
+
+        $membership = ['group' => self::GROUP, 'interface' => '0.0.0.0'];
+        $joined = @socket_set_option($receiver, IPPROTO_IP, MCAST_JOIN_GROUP, $membership);
+        if ($joined === false) {
+            $joined = @socket_set_option($receiver, IPPROTO_IP, IP_ADD_MEMBERSHIP, $membership);
+        }
+        if ($joined === false) {
+            socket_close($receiver);
+
+            return false;
+        }
+
+        @socket_set_option($receiver, IPPROTO_IP, IP_MULTICAST_LOOP, 1);
+        socket_set_nonblock($receiver);
+
+        $sender = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+        if ($sender === false) {
+            socket_close($receiver);
+
+            return false;
+        }
+        @socket_set_option($sender, IPPROTO_IP, IP_MULTICAST_LOOP, 1);
+        @socket_set_option($sender, IPPROTO_IP, IP_MULTICAST_TTL, 1);
+        $sent = @socket_sendto($sender, 'probe', 5, 0, self::GROUP, $port);
+        if ($sent === false) {
+            socket_close($sender);
+            socket_close($receiver);
+
+            return false;
+        }
+
+        $read = [$receiver];
+        $write = $except = [];
+        $delivered = @socket_select($read, $write, $except, 0, 250_000) > 0;
+
+        socket_close($sender);
+        socket_close($receiver);
+
+        return $delivered;
+    }
+
+    /**
+     * Bind the socket to the group address itself. Works on hosts whose loopback
+     * (or dummy) interface has the MULTICAST flag; fails on Windows and on GHA
+     * Ubuntu without extra interfaces.
+     */
+    private static function probeWithStreams(): bool
     {
         $receiver = @stream_socket_server(
             'udp://' . self::GROUP . ':5354',
