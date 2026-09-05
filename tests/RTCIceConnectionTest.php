@@ -489,6 +489,8 @@ class RTCIceConnectionTest extends TestCase
         $connection2 = $this->getIceConnection(false);
         $connection1->setUseIPv4(false);
         $connection2->setUseIPv4(false);
+        $connection1->setNat1to1(['::1']);
+        $connection2->setNat1to1(['::1']);
 
         $this->inviteAccept($connection1, $connection2);
         $this->assertGreaterThan(0, count($connection1->getLocalCandidates()));
@@ -886,6 +888,8 @@ class RTCIceConnectionTest extends TestCase
         $connection2 = $this->getIceConnection(false);
         $connection1->setUseIPv4(false);
         $connection2->setUseIPv4(false);
+        $connection1->setNat1to1(['::1']);
+        $connection2->setNat1to1(['::1']);
 
         $this->inviteAccept($connection1, $connection2);
 
@@ -1446,13 +1450,11 @@ class RTCIceConnectionTest extends TestCase
     private function getIceConnection(bool $iceControlling = true): RTCIceConnection
     {
         $connection = new RTCIceConnection($this->config, $iceControlling ? IceRole::Controlling : IceRole::Controlled);
-        // GitHub runners advertise IPv6 addresses that do not actually deliver
-        // datagrams (the IPv6 tests already skip for this). Gathering them makes
-        // the first connectivity check go to a dead pair and fail ICE before the
-        // working IPv4 pair is tried — which is the early-check scenario.
-        if (getenv('CI')) {
-            $connection->setUseIPv6(false);
-        }
+        // Same-process tests must talk over loopback. Using the machine's LAN
+        // addresses makes macOS pick a different UDP source IP for the Binding
+        // response than the one in the remote candidate, so the check is
+        // discarded and ICE fails. 127.0.0.1 has a stable source on every OS.
+        $connection->setNat1to1(['127.0.0.1']);
 
         return $connection;
     }
