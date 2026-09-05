@@ -231,6 +231,23 @@ class RTCIceConnectionTest extends TestCase
         $connection1 = $this->getIceConnection();
         $connection2 = $this->getIceConnection(false);
 
+        $mkLog = fn(string $tag) => new class($tag) extends \Psr\Log\AbstractLogger {
+            public function __construct(private string $tag) {}
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $addr = '';
+                foreach (['ToAddress', 'FromAddress'] as $k) {
+                    if (isset($context[$k])) { $addr .= " $k=" . $context[$k]; }
+                }
+                if (isset($context['Message']) && is_string($context['Message'])) {
+                    $addr .= ' ' . preg_replace('/\s+/', ' ', substr($context['Message'], 0, 60));
+                }
+                fwrite(STDERR, "[{$this->tag}] $message$addr\n");
+            }
+        };
+        $connection1->setLogger($mkLog('c1'));
+        $connection2->setLogger($mkLog('c2'));
+
         $this->inviteAccept($connection1, $connection2);
 
         $data1 = [];
