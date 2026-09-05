@@ -80,9 +80,8 @@ jobs:
           # interface address cannot send to 127.0.0.1 (a different, loopback interface),
           # so ICE's host-candidate sockets never reach the local STUN/TURN server. Linux
           # uses the weak host model, where this works. Enable it on every IPv4 interface.
-          Get-NetIPInterface -AddressFamily IPv4 | ForEach-Object {
-            netsh interface ipv4 set interface interface="$($_.InterfaceIndex)" weakhostsend=enabled weakhostreceive=enabled | Out-Null
-          }
+          Set-NetIPInterface -AddressFamily IPv4 -WeakHostSend Enabled -WeakHostReceive Enabled -ErrorAction SilentlyContinue
+          Get-NetIPInterface -AddressFamily IPv4 | Format-Table InterfaceIndex, InterfaceAlias, WeakHostSend, WeakHostReceive
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress

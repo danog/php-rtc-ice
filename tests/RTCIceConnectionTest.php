@@ -771,7 +771,9 @@ class RTCIceConnectionTest extends TestCase
             fwrite(STDERR, "[DIAG STUN] probe bind " . $lan->getHost() . " => " . ($probe !== false ? 'ok' : "fail $es") . "\n");
             if ($probe !== false) {
                 $sent = @stream_socket_sendto($probe, 'x', 0, '127.0.0.1:3478');
-                fwrite(STDERR, "[DIAG STUN] sendto 127.0.0.1:3478 => " . var_export($sent, true) . "\n");
+                fwrite(STDERR, "[DIAG STUN] LAN-bound sendto 127.0.0.1:3478 => " . var_export($sent, true) . "\n");
+                $sent2 = @stream_socket_sendto($probe, 'x', 0, $lan->getHost() . ':3478');
+                fwrite(STDERR, "[DIAG STUN] LAN-bound sendto own LAN:3478 => " . var_export($sent2, true) . "\n");
                 fclose($probe);
             }
         }
