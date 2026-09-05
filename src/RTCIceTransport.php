@@ -19,6 +19,7 @@ use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\IceRole;
 use Webrtc\ICE\Enum\IceTransportState;
 use Webrtc\Mixin\EventForwarder;
+use Webrtc\Mixin\EventForwarderHost;
 
 /**
  * Class RTCIceTransport
@@ -26,7 +27,7 @@ use Webrtc\Mixin\EventForwarder;
  * Handles ICE transport functionality including connection state,
  * sending data, and reacting to events emitted by the ICE connection.
  */
-final class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface
+final class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface, EventForwarderHost
 {
     use EventForwarder;
 

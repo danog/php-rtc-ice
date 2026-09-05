@@ -63,9 +63,12 @@ final class Multicast
         }
 
         $membership = ['group' => self::GROUP, 'interface' => '0.0.0.0'];
-        $joined = @socket_set_option($receiver, IPPROTO_IP, MCAST_JOIN_GROUP, $membership);
-        if ($joined === false) {
-            $joined = @socket_set_option($receiver, IPPROTO_IP, IP_ADD_MEMBERSHIP, $membership);
+        $joined = false;
+        if (defined('MCAST_JOIN_GROUP')) {
+            $joined = @socket_set_option($receiver, \IPPROTO_IP, \MCAST_JOIN_GROUP, $membership);
+        }
+        if ($joined === false && defined('IP_ADD_MEMBERSHIP')) {
+            $joined = @socket_set_option($receiver, \IPPROTO_IP, \IP_ADD_MEMBERSHIP, $membership);
         }
         if ($joined === false) {
             socket_close($receiver);
@@ -73,7 +76,9 @@ final class Multicast
             return false;
         }
 
-        @socket_set_option($receiver, IPPROTO_IP, IP_MULTICAST_LOOP, 1);
+        if (defined('IP_MULTICAST_LOOP')) {
+            @socket_set_option($receiver, \IPPROTO_IP, \IP_MULTICAST_LOOP, 1);
+        }
         socket_set_nonblock($receiver);
 
         $sender = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
@@ -82,8 +87,12 @@ final class Multicast
 
             return false;
         }
-        @socket_set_option($sender, IPPROTO_IP, IP_MULTICAST_LOOP, 1);
-        @socket_set_option($sender, IPPROTO_IP, IP_MULTICAST_TTL, 1);
+        if (defined('IP_MULTICAST_LOOP')) {
+            @socket_set_option($sender, \IPPROTO_IP, \IP_MULTICAST_LOOP, 1);
+        }
+        if (defined('IP_MULTICAST_TTL')) {
+            @socket_set_option($sender, \IPPROTO_IP, \IP_MULTICAST_TTL, 1);
+        }
         $sent = @socket_sendto($sender, 'probe', 5, 0, self::GROUP, $port);
         if ($sent === false) {
             socket_close($sender);

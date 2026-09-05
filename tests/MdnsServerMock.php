@@ -125,9 +125,15 @@ class MdnsServerMock
         }
 
         $membership = ['group' => '224.0.0.251', 'interface' => '0.0.0.0'];
-        if (@socket_set_option($socket, IPPROTO_IP, MCAST_JOIN_GROUP, $membership) === false) {
-            @socket_set_option($socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, $membership);
+        $joined = false;
+        if (defined('MCAST_JOIN_GROUP')) {
+            $joined = @socket_set_option($socket, \IPPROTO_IP, \MCAST_JOIN_GROUP, $membership);
         }
-        @socket_set_option($socket, IPPROTO_IP, IP_MULTICAST_LOOP, 1);
+        if ($joined === false && defined('IP_ADD_MEMBERSHIP')) {
+            @socket_set_option($socket, \IPPROTO_IP, \IP_ADD_MEMBERSHIP, $membership);
+        }
+        if (defined('IP_MULTICAST_LOOP')) {
+            @socket_set_option($socket, \IPPROTO_IP, \IP_MULTICAST_LOOP, 1);
+        }
     }
 }

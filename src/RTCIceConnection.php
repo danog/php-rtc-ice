@@ -32,6 +32,7 @@ use Webrtc\ICE\Enum\TransportType;
 use Webrtc\ICE\Trait\DNS;
 use Webrtc\ICE\Trait\Mdns;
 use Webrtc\ICE\Trait\NetworkAdapter;
+use Webrtc\Mixin\SerializableState;
 use Webrtc\STUN\Enum\MessageAttribute;
 use Webrtc\STUN\Enum\MessageClass;
 use Webrtc\STUN\Enum\MessageMethod;
@@ -166,6 +167,9 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
 
     /** @var string|null Handle of the consent check timer */
     private ?string $queryConsentTimer = null;
+
+    /** Consecutive consent-check failures, reset on a successful check. */
+    private int $consentFailureCount = 0;
 
     /** @var bool Whether waiting for binding response */
     private bool $isBindingWait = false;
@@ -540,7 +544,8 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             return $this->createCandidate($stun->getId(), $mappedAddress->getAddress(), $mappedAddress->getPort(), $componentId, CandidateType::srflx, $stun->getLocalHost(), $stun->getLocalPort());
         } catch (Throwable $e) {
             $this->logger?->error(sprintf("Could not request stun server: %s - %s", $e->getMessage(), implode(":", $stunServer)));
-            $stun->close();
+            // Keep the host-candidate socket. Closing it here dropped the only path
+            // ICE can use when the STUN server is unreachable.
             return false;
         }
     }
@@ -1703,30 +1708,9 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     public function periodicConsentCheck(): void
     {
         $interval = $this->calculateConsentInterval();
-        $failureCount = 0;
+        $this->consentFailureCount = 0;
 
-        $this->queryConsentTimer = EventLoop::repeat($interval, function () use (&$failureCount): void {
-            foreach ($this->nominated as $pair) {
-                $message = $this->buildBindingMessage($pair, false);
-                $remoteAddress = $pair->getRemoteAddress();
-
-                // Each check blocks, and a repeat callback that suspends is not re-entered,
-                // so the checks run in their own fibers.
-                async(function () use ($pair, $message, $remoteAddress, &$failureCount): void {
-                    try {
-                        $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
-                        $failureCount = 0; // Reset failures on success
-                    } catch (Throwable $e) {
-                        $failureCount++;
-                        $this->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
-                        if ($failureCount >= self::CONSENT_FAILURES) {
-                            $this->logger?->error("Consent to send expired after $failureCount failures");
-                            $this->close();
-                        }
-                    }
-                })->ignore();
-            }
-        });
+        $this->queryConsentTimer = EventLoop::repeat($interval, $this->onConsentTimer(...));
     }
 
     /**
@@ -2272,5 +2256,62 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     public function setNat1to1(?array $nat1to1): void
     {
         $this->nat1to1 = $nat1to1;
+    }
+
+    /**
+     * Consent-freshness tick. Public so the event-loop watcher can be rescheduled after unserialize.
+     */
+    public function onConsentTimer(): void
+    {
+        foreach ($this->nominated as $pair) {
+            $message = $this->buildBindingMessage($pair, false);
+            $remoteAddress = $pair->getRemoteAddress();
+
+            async(function () use ($pair, $message, $remoteAddress): void {
+                try {
+                    $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                    $this->consentFailureCount = 0;
+                } catch (Throwable $e) {
+                    $this->consentFailureCount++;
+                    $this->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
+                    if ($this->consentFailureCount >= self::CONSENT_FAILURES) {
+                        $this->logger?->error("Consent to send expired after {$this->consentFailureCount} failures");
+                        $this->close();
+                    }
+                }
+            })->ignore();
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function __serialize(): array
+    {
+        return SerializableState::export($this, [
+            'bindingCheck' => null,
+            'bindingCheckScheduled' => false,
+            'queryConsentTimer' => $this->queryConsentTimer !== null,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function __unserialize(array $data): void
+    {
+        $restartConsent = false;
+        foreach ($data as $key => $value) {
+            if (is_string($key) && str_ends_with($key, "\0queryConsentTimer")) {
+                $restartConsent = $value === true;
+                $data[$key] = null;
+            }
+        }
+        SerializableState::import($this, $data);
+        $this->bindingCheck = null;
+        $this->queryConsentTimer = null;
+        if ($restartConsent && $this->nominated !== []) {
+            $this->periodicConsentCheck();
+        }
     }
 }

@@ -109,7 +109,7 @@ class RTCIceConnectionTest extends TestCase
 
         fclose($pipes[0]);
 
-        $deadline = microtime(true) + 5;
+        $deadline = microtime(true) + 30;
         do {
             if (self::turnServerIsReady()) {
                 return;
@@ -181,7 +181,7 @@ class RTCIceConnectionTest extends TestCase
 
     public function testClose()
     {
-        $connection = new RTCIceConnection($this->config);
+        $connection = $this->iceConnection();
         $this->assertFalse($connection->isClosed());
 
         // Close
@@ -754,7 +754,7 @@ class RTCIceConnectionTest extends TestCase
 
         $config = clone $this->config;
         $config->setStunServer([self::localServerHost(), 3478]);
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection2 = $this->getIceConnection(false);
 
         $this->inviteAccept($connection1, $connection2);
@@ -792,7 +792,7 @@ class RTCIceConnectionTest extends TestCase
         $config = clone $this->config;
         // RFC 6761: the .invalid TLD is guaranteed not to resolve.
         $config->setStunServer(['fakestun.invalid', 3478]);
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection2 = $this->getIceConnection(false);
 
         $this->inviteAccept($connection1, $connection2);
@@ -823,7 +823,7 @@ class RTCIceConnectionTest extends TestCase
     {
         $config = clone $this->config;
         $config->setStunServer(['127.0.0.1', self::unusedUdpPort()]);
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection2 = $this->getIceConnection(false);
 
         $this->inviteAccept($connection1, $connection2);
@@ -858,7 +858,7 @@ class RTCIceConnectionTest extends TestCase
 
         $config = clone $this->config;
         $config->setStunServer([self::localServerHost(), 3478]);
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection2 = $this->getIceConnection(false);
         $connection1->setUseIPv4(false);
         $connection2->setUseIPv4(false);
@@ -898,7 +898,7 @@ class RTCIceConnectionTest extends TestCase
         $config->setTurnUsername('quasarstream');
         $config->setTurnPassword('123');
         $config->setTurnTransport('tcp');
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection2 = $this->getIceConnection(false);
 
         $this->inviteAccept($connection1, $connection2);
@@ -939,7 +939,7 @@ class RTCIceConnectionTest extends TestCase
         $config->setTurnServer([self::localServerHost(), 3478]);
         $config->setTurnUsername('quasarstream');
         $config->setTurnPassword('123');
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection2 = $this->getIceConnection(false);
 
         $this->inviteAccept($connection1, $connection2);
@@ -1176,7 +1176,7 @@ class RTCIceConnectionTest extends TestCase
 
         $config = clone $this->config;
         $config->setStunServer([self::localServerHost(), 3478]);
-        $connection1 = new RTCIceConnection($config, IceRole::Controlling);
+        $connection1 = $this->iceConnection($config);
         $connection1->setTransportPolicy(TransportPolicyType::RELAY);
         $connection2 = $this->getIceConnection(false);
 
@@ -1218,7 +1218,7 @@ class RTCIceConnectionTest extends TestCase
         $config->setTurnServer([self::localServerHost(), 3478]);
         $config->setTurnUsername('quasarstream');
         $config->setTurnPassword('123');
-        $connection = new RTCIceConnection($config, IceRole::Controlling);
+        $connection = $this->iceConnection($config);
         $connection->setTransportPolicy(TransportPolicyType::RELAY);
 
         $connection->gatherCandidates();
@@ -1426,33 +1426,13 @@ class RTCIceConnectionTest extends TestCase
     }
 
     /**
-     * The address at which the test-managed Coturn (bound to every interface) is reachable
-     * from an ICE host-candidate socket.
+     * Loopback address of the test-managed Coturn server.
      *
-     * On POSIX that is loopback. Windows uses the strong host model: a socket bound to a LAN
-     * host-candidate address cannot send to 127.0.0.1. With the CI firewall disabled, the
-     * host's own primary IPv4 is reachable from those sockets (same-interface hairpin).
+     * Windows tests also bind host candidates to 127.0.0.1 (see iceConnection()), so the
+     * STUN/TURN path is loopback-to-loopback and does not depend on the strong host model.
      */
     private static function localServerHost(): string
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
-            return '127.0.0.1';
-        }
-
-        $interfaces = net_get_interfaces();
-        foreach ($interfaces === false ? [] : $interfaces as $interface) {
-            /** @var array{unicast?: array<int, array{address?: string}>} $interface */
-            foreach ($interface['unicast'] ?? [] as $unicast) {
-                $address = $unicast['address'] ?? null;
-                if (is_string($address)
-                    && $address !== '127.0.0.1'
-                    && filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
-                ) {
-                    return $address;
-                }
-            }
-        }
-
         return '127.0.0.1';
     }
 
@@ -1464,7 +1444,25 @@ class RTCIceConnectionTest extends TestCase
 
     private function getIceConnection(bool $iceControlling = true): RTCIceConnection
     {
-        return new RTCIceConnection($this->config, $iceControlling ? IceRole::Controlling : IceRole::Controlled);
+        return $this->iceConnection(null, $iceControlling);
+    }
+
+    /**
+     * @param RTCIceProtocolConfiguration|null $config
+     */
+    private function iceConnection(?RTCIceProtocolConfiguration $config = null, bool $iceControlling = true): RTCIceConnection
+    {
+        $connection = new RTCIceConnection(
+            $config ?? $this->config,
+            $iceControlling ? IceRole::Controlling : IceRole::Controlled,
+        );
+        // Cygwin Coturn on Windows is reachable from Win32 PHP on loopback, not from a
+        // LAN-bound host-candidate socket (strong host model). Pin host candidates there.
+        if (PHP_OS_FAMILY === 'Windows') {
+            $connection->setNat1to1(['127.0.0.1']);
+        }
+
+        return $connection;
     }
 
     private function inviteAccept(RTCIceConnection $connection1, RTCIceConnection $connection2): void
