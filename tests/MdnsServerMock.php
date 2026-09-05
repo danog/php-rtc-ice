@@ -32,7 +32,17 @@ class MdnsServerMock
 
     public function start(): string
     {
-        $this->server = bindUdpSocket($this->address);
+        // Windows rejects binding a socket directly to a multicast group address
+        // (WSAEADDRNOTAVAIL). Group delivery does not reach loopback on CI anyway, so the
+        // responder is only exercised where multicast genuinely works (the Good test guards
+        // on Multicast::isAvailable()); elsewhere a wildcard bind on the same port keeps the
+        // mock constructible so the resolution-failure paths can still run.
+        try {
+            $this->server = bindUdpSocket($this->address);
+        } catch (\Amp\Socket\SocketException) {
+            $port = substr($this->address, strrpos($this->address, ':') ?: 0);
+            $this->server = bindUdpSocket('0.0.0.0' . $port);
+        }
 
         $decoder = (new DecoderFactory())->create();
         $encoder = (new EncoderFactory())->create();
