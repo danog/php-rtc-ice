@@ -753,7 +753,7 @@ class RTCIceConnectionTest extends TestCase
         $this->requireLocalTurnServer();
 
         $config = clone $this->config;
-        $config->setStunServer(['127.0.0.1', 3478]);
+        $config->setStunServer([self::localServerHost(), 3478]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
         $connection2 = $this->getIceConnection(false);
 
@@ -882,7 +882,7 @@ class RTCIceConnectionTest extends TestCase
         }
 
         $config = clone $this->config;
-        $config->setStunServer(['127.0.0.1', 3478]);
+        $config->setStunServer([self::localServerHost(), 3478]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
         $connection2 = $this->getIceConnection(false);
         $connection1->setUseIPv4(false);
@@ -919,7 +919,7 @@ class RTCIceConnectionTest extends TestCase
         $this->requireLocalTurnServer();
 
         $config = clone $this->config;
-        $config->setTurnServer(['127.0.0.1', 3478]);
+        $config->setTurnServer([self::localServerHost(), 3478]);
         $config->setTurnUsername('quasarstream');
         $config->setTurnPassword('123');
         $config->setTurnTransport('tcp');
@@ -961,7 +961,7 @@ class RTCIceConnectionTest extends TestCase
         $this->requireLocalTurnServer();
 
         $config = clone $this->config;
-        $config->setTurnServer(['127.0.0.1', 3478]);
+        $config->setTurnServer([self::localServerHost(), 3478]);
         $config->setTurnUsername('quasarstream');
         $config->setTurnPassword('123');
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
@@ -1200,7 +1200,7 @@ class RTCIceConnectionTest extends TestCase
         $this->requireLocalTurnServer();
 
         $config = clone $this->config;
-        $config->setStunServer(['127.0.0.1', 3478]);
+        $config->setStunServer([self::localServerHost(), 3478]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
         $connection1->setTransportPolicy(TransportPolicyType::RELAY);
         $connection2 = $this->getIceConnection(false);
@@ -1240,7 +1240,7 @@ class RTCIceConnectionTest extends TestCase
         $this->requireLocalTurnServer();
 
         $config = clone $this->config;
-        $config->setTurnServer(['127.0.0.1', 3478]);
+        $config->setTurnServer([self::localServerHost(), 3478]);
         $config->setTurnUsername('quasarstream');
         $config->setTurnPassword('123');
         $connection = new RTCIceConnection($config, IceRole::Controlling);
@@ -1442,6 +1442,35 @@ class RTCIceConnectionTest extends TestCase
         if (!self::turnServerIsReady()) {
             $this->markTestSkipped(self::$turnServerUnavailableReason ?? 'The test-managed Coturn server is unavailable.');
         }
+    }
+
+    /**
+     * The address at which the test-managed Coturn (bound to every interface) is reachable
+     * from an ICE host-candidate socket.
+     *
+     * On POSIX that is loopback. Windows uses the strong host model, where a socket bound to
+     * a LAN interface address cannot send to 127.0.0.1, so host-candidate sockets would never
+     * reach a loopback server; the host's own primary IPv4 is reachable from them instead.
+     */
+    private static function localServerHost(): string
+    {
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            return '127.0.0.1';
+        }
+
+        // Connecting a UDP socket sends nothing but makes the OS pick the primary source
+        // address for the default route, which is the address ICE gathers as a host candidate.
+        $probe = @stream_socket_client('udp://192.0.2.1:9', $errno, $errstr);
+        if ($probe === false) {
+            return '127.0.0.1';
+        }
+        $name = (string) stream_socket_get_name($probe, false);
+        fclose($probe);
+
+        $colon = strrpos($name, ':');
+        $host = $colon === false ? $name : substr($name, 0, $colon);
+
+        return $host !== '' ? $host : '127.0.0.1';
     }
 
     private function assertCandidateTypes(RTCIceConnection $conn, array $expected): void
