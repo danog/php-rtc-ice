@@ -57,8 +57,20 @@ jobs:
 
       - name: Install Coturn (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          choco install coturn -y
+          # Coturn ships no official Windows package; this is a pinned, checksum-verified
+          # Cygwin build (turnserver.exe plus its cygwin DLLs). The suite spawns and owns it.
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/SjoerdNLD/coturn_cygwin_build/releases/download/4.10.0/turnserver_4.10.0_cygwinbuild.zip'
+          $zip = "$env:RUNNER_TEMP\coturn.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $expected = '5F319594EECBA0A15251C1D78B8014B8878BF9E2A40C70DEE79B8EE5D9FA047C'
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "coturn zip checksum mismatch: got $actual" }
+          Expand-Archive -Path $zip -DestinationPath 'C:\coturn' -Force
+          # turnserver.exe loads its cygwin DLLs from its own directory, so put that on PATH.
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\coturn\turnserver_4.10.0'
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
