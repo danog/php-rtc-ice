@@ -160,7 +160,11 @@ class RTCIceConnectionTest extends TestCase
                     [
                         'unicast' => [
                             ['address' => '1.2.3.4'],
-                            ['address' => '2a02:0db8:85a3:0000:0000:8a2e:0370:7334']
+                            ['address' => '169.254.1.1'],
+                            ['address' => '127.0.0.1'],
+                            ['address' => '2a02:0db8:85a3:0000:0000:8a2e:0370:7334'],
+                            ['address' => 'fe80::1'],
+                            ['address' => '::1'],
                         ]
                     ]
                 ]
@@ -238,9 +242,14 @@ class RTCIceConnectionTest extends TestCase
         $this->getData($connection1, $data1);
         $this->getData($connection2, $data2);
 
-        async(fn() => $connection1->connect())->ignore();
+        // Connection 1 starts checking first so its Binding requests arrive as early
+        // checks on connection 2. Both connect() calls still have to finish before
+        // application data is sent; ignoring the futures and sending immediately is
+        // what made this test race on loaded CI runners.
+        $connect1 = async(fn() => $connection1->connect());
         delay(1);
-        async(fn() => $connection2->connect())->ignore();
+        $connect2 = async(fn() => $connection2->connect());
+        await([$connect1, $connect2]);
 
         $connection1->sendData('Hello');
         $this->waitForData($data2);

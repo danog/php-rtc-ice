@@ -55,10 +55,8 @@ jobs:
         run: |
           brew install coturn
 
-      - name: Install Coturn (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          choco install coturn -y
+      # Coturn has no Chocolatey package or Windows build. TURN-dependent tests
+      # skip themselves when the turnserver binary is missing; host-only ICE still runs.
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
