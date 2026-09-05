@@ -72,6 +72,18 @@ jobs:
           # turnserver.exe loads its cygwin DLLs from its own directory, so put that on PATH.
           Add-Content -Path $env:GITHUB_PATH -Value 'C:\coturn\turnserver_4.10.0'
 
+      - name: Enable weak host model (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # Windows defaults to the strong host model: a UDP socket bound to a LAN
+          # interface address cannot send to 127.0.0.1 (a different, loopback interface),
+          # so ICE's host-candidate sockets never reach the local STUN/TURN server. Linux
+          # uses the weak host model, where this works. Enable it on every IPv4 interface.
+          Get-NetIPInterface -AddressFamily IPv4 | ForEach-Object {
+            netsh interface ipv4 set interface interface="$($_.InterfaceIndex)" weakhostsend=enabled weakhostreceive=enabled | Out-Null
+          }
+
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
 
