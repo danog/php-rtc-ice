@@ -238,9 +238,15 @@ class RTCIceConnectionTest extends TestCase
         $this->getData($connection1, $data1);
         $this->getData($connection2, $data2);
 
-        async(fn() => $connection1->connect())->ignore();
+        // Connection 1 starts checking first, so its Binding requests arrive on
+        // connection 2 as early checks. Application data is unreliable UDP with no
+        // retransmission, so ICE has to finish on both agents before the single
+        // datagram is sent, otherwise it is dropped on a cold path (which happens on
+        // the macOS runner, though loopback on Linux buffers it and hides the race).
+        $connect1 = async(fn() => $connection1->connect());
         delay(1);
-        async(fn() => $connection2->connect())->ignore();
+        $connect2 = async(fn() => $connection2->connect());
+        await([$connect1, $connect2]);
 
         $connection1->sendData('Hello');
         $this->waitForData($data2);
@@ -1369,10 +1375,14 @@ class RTCIceConnectionTest extends TestCase
 
     private static function findTurnServerBinary(): ?string
     {
+        // Windows names the executable turnserver.exe; POSIX has no suffix.
+        $names = DIRECTORY_SEPARATOR === '\\' ? ['turnserver.exe', 'turnserver'] : ['turnserver'];
         foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $directory) {
-            $binary = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'turnserver';
-            if (is_file($binary) && is_executable($binary)) {
-                return $binary;
+            foreach ($names as $name) {
+                $binary = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
+                if (is_file($binary) && is_executable($binary)) {
+                    return $binary;
+                }
             }
         }
 
