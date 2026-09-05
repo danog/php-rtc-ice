@@ -42,6 +42,43 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
 
+      - name: Configure Linux network (multicast, IPv6, rp_filter)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo ip link set lo multicast on
+          sudo ip route replace 224.0.0.0/4 dev lo || true
+          sudo sysctl -w net.ipv4.conf.all.rp_filter=0
+          sudo sysctl -w net.ipv4.conf.default.rp_filter=0
+          sudo sysctl -w net.ipv4.conf.lo.rp_filter=0
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+          # Unique-local on loopback so ICE can gather a non-::1 IPv6 host candidate.
+          sudo ip -6 addr add fd00:1:2:3::1/128 dev lo || true
+
+      - name: Configure macOS network (multicast, IPv6, firewall)
+        if: matrix.os == 'macos-latest'
+        run: |
+          sudo ifconfig lo0 multicast || true
+          sudo route -n add -net 224.0.0.0/4 -interface lo0 || true
+          sudo ifconfig lo0 inet6 fd00:1:2:3::1/128 alias || true
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off || true
+
+      - name: Configure Windows network (firewall, weak host, IPv6)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # Host-candidate sockets bind a LAN address. Windows defaults to the strong
+          # host model, so those sockets cannot reach 127.0.0.1 (where Coturn listens)
+          # and the public-profile firewall drops the hairpin STUN/TURN datagrams.
+          # Linux already allows this path; enable the same behaviour here.
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+          Get-NetIPInterface | ForEach-Object {
+            Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex `
+              -WeakHostSend Enabled -WeakHostReceive Enabled -ErrorAction SilentlyContinue
+          }
+          netsh interface ipv6 add address "Loopback Pseudo-Interface 1" fd00:1:2:3::1
+          netsh interface ipv6 show address
+
       - name: Install Coturn (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -71,12 +108,11 @@ jobs:
           Expand-Archive -Path $zip -DestinationPath 'C:\coturn' -Force
           # turnserver.exe loads its cygwin DLLs from its own directory, so put that on PATH.
           Add-Content -Path $env:GITHUB_PATH -Value 'C:\coturn\turnserver_4.10.0'
+          Get-ChildItem 'C:\coturn\turnserver_4.10.0'
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
 
       - name: Run PHPUnit tests
-        # Every runner OS lacks the multicast/IPv6/STUN-gathering guarantees a subset of
-        # tests need (mDNS and IPv6 coverage cannot run on GitHub's infrastructure), so the
-        # skip-tolerant config is used on CI. The strict phpunit.xml stays for local runs.
-        run: vendor/bin/phpunit -c phpunit-skiptolerant.xml
+        run: vendor/bin/phpunit
+        shell: bash

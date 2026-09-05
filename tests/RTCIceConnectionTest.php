@@ -482,8 +482,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectIpv6()
     {
-        if (!$this->isSupportIPv6() || getenv('CI')) {
-            $this->markTestSkipped(getenv('CI') ? 'CI lacks IPv6.' : 'This host has no usable IPv6.');
+        if (!$this->isSupportIPv6()) {
+            $this->markTestSkipped('This host has no usable IPv6.');
         }
 
         $connection1 = $this->getIceConnection();
@@ -789,21 +789,9 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerDnsLookupError()
     {
-        // This test relies on STUN gathering failing during an ICE negotiation; the shared
-        // GitHub Actions runners resolve and route traffic in ways that break the negotiation,
-        // so only run it off CI.
-        if (getenv('CI')) {
-            $this->markTestSkipped('Got conflict on GitHub Actions.');
-        }
-
-        // RFC 2606 reserves .test so that it never resolves, but a resolver that answers
-        // wildcards would hand back an address and there would be no lookup failure to see.
-        if (gethostbyname('fakestun.test') !== 'fakestun.test') {
-            $this->markTestSkipped('This resolver answers for names that should not exist.');
-        }
-
         $config = clone $this->config;
-        $config->setStunServer(['fakestun.test', 3478]); // invalid stun server domain name
+        // RFC 6761: the .invalid TLD is guaranteed not to resolve.
+        $config->setStunServer(['fakestun.invalid', 3478]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
         $connection2 = $this->getIceConnection(false);
 
@@ -833,21 +821,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerTimeout()
     {
-        // Same CI conflict as the DNS lookup error: gathering depends on the STUN
-        // request timing out while the connection stays up, which is not reliable
-        // on shared GitHub Actions runners.
-        if (getenv('CI')) {
-            $this->markTestSkipped('Got conflict on GitHub Actions.');
-        }
-
-        // The point is that nothing answers, so a STUN server that happens to be listening
-        // on this port would make the request succeed rather than time out.
-        if (self::portIsOccupied(1234)) {
-            $this->markTestSkipped('Something is listening on 127.0.0.1:1234.');
-        }
-
         $config = clone $this->config;
-        $config->setStunServer(['127.0.0.1', 1234]); // Invalid port causes timout
+        $config->setStunServer(['127.0.0.1', self::unusedUdpPort()]);
         $connection1 = new RTCIceConnection($config, IceRole::Controlling);
         $connection2 = $this->getIceConnection(false);
 
@@ -877,8 +852,8 @@ class RTCIceConnectionTest extends TestCase
 
     public function testConnectWithStunServerIpv6()
     {
-        if (!$this->isSupportIPv6() || getenv('CI')) {
-            $this->markTestSkipped(getenv('CI') ? 'CI lacks IPv6.' : 'This host has no usable IPv6.');
+        if (!$this->isSupportIPv6()) {
+            $this->markTestSkipped('This host has no usable IPv6.');
         }
 
         $config = clone $this->config;
@@ -1358,19 +1333,25 @@ class RTCIceConnectionTest extends TestCase
     }
 
     /**
-     * Whether anything holds a UDP port on loopback.
+     * A UDP port on loopback that nothing is listening on, so a STUN request to it times out.
      */
-    private static function portIsOccupied(int $port): bool
+    private static function unusedUdpPort(): int
     {
-        $socket = @stream_socket_server("udp://127.0.0.1:$port", $errno, $errstr, STREAM_SERVER_BIND);
-
+        $socket = stream_socket_server('udp://127.0.0.1:0', $errno, $errstr, STREAM_SERVER_BIND);
         if ($socket === false) {
-            return true;
+            throw new \RuntimeException("Could not bind an ephemeral UDP socket: $errstr");
         }
 
+        $name = (string) stream_socket_get_name($socket, false);
         fclose($socket);
 
-        return false;
+        $colon = strrpos($name, ':');
+        $port = $colon === false ? 0 : (int) substr($name, $colon + 1);
+        if ($port < 1) {
+            throw new \RuntimeException("Could not read the ephemeral UDP port from $name");
+        }
+
+        return $port;
     }
 
     private static function findTurnServerBinary(): ?string
@@ -1445,36 +1426,14 @@ class RTCIceConnectionTest extends TestCase
     }
 
     /**
-     * The address at which the test-managed Coturn (bound to every interface) is reachable
-     * from an ICE host-candidate socket.
+     * Loopback address of the test-managed Coturn server.
      *
-     * On POSIX that is loopback. Windows uses the strong host model, where a socket bound to
-     * a LAN interface address cannot send to 127.0.0.1, so host-candidate sockets would never
-     * reach a loopback server; the host's own primary IPv4 is reachable from them instead.
+     * GitHub's Windows runners use the strong host model and a public-profile firewall, so a
+     * socket bound to a LAN host-candidate address cannot reach 127.0.0.1 until those are
+     * configured (see .github/workflows/tests.yml). After that, this is 127.0.0.1 everywhere.
      */
     private static function localServerHost(): string
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
-            return '127.0.0.1';
-        }
-
-        // Return the first non-loopback IPv4, the same address ICE gathers as its first host
-        // candidate, so the socket bound to it can reach the server (bound to all interfaces)
-        // at that address.
-        $interfaces = net_get_interfaces();
-        foreach ($interfaces === false ? [] : $interfaces as $interface) {
-            /** @var array{unicast?: array<int, array{address?: string}>} $interface */
-            foreach ($interface['unicast'] ?? [] as $unicast) {
-                $address = $unicast['address'] ?? null;
-                if (is_string($address)
-                    && $address !== '127.0.0.1'
-                    && filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
-                ) {
-                    return $address;
-                }
-            }
-        }
-
         return '127.0.0.1';
     }
 
