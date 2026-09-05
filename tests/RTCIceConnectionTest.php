@@ -1445,7 +1445,16 @@ class RTCIceConnectionTest extends TestCase
 
     private function getIceConnection(bool $iceControlling = true): RTCIceConnection
     {
-        return new RTCIceConnection($this->config, $iceControlling ? IceRole::Controlling : IceRole::Controlled);
+        $connection = new RTCIceConnection($this->config, $iceControlling ? IceRole::Controlling : IceRole::Controlled);
+        // GitHub runners advertise IPv6 addresses that do not actually deliver
+        // datagrams (the IPv6 tests already skip for this). Gathering them makes
+        // the first connectivity check go to a dead pair and fail ICE before the
+        // working IPv4 pair is tried — which is the early-check scenario.
+        if (getenv('CI')) {
+            $connection->setUseIPv6(false);
+        }
+
+        return $connection;
     }
 
     private function inviteAccept(RTCIceConnection $connection1, RTCIceConnection $connection2): void

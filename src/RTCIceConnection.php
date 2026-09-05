@@ -75,6 +75,14 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var int Maximum number of binding retry attempts */
     private const RETRY_BINDING_MAX = 10;
 
+    /**
+     * Retransmissions for one connectivity-check transaction (RFC 5389 RTO
+     * doubling). A single 500ms try is not enough on a loaded macOS runner:
+     * the peer's reply arrives, but after the transaction has already been
+     * declared timed out, and with one pair ICE fails.
+     */
+    private const CHECK_RETRANSMISSIONS = 3;
+
     /** @var int Maximum number of consent failures before closing */
     private const CONSENT_FAILURES = 6;
 
@@ -1253,7 +1261,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         // concurrently and the check list has to keep moving while each is outstanding.
         async(function () use ($pair, $message, $remoteAddress, $nominate): void {
             try {
-                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword, self::CHECK_RETRANSMISSIONS);
                 if ($address === null) {
                     $this->markPairFailed($pair);
                     return;
