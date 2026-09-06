@@ -2259,9 +2259,13 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     }
 
     /**
-     * Consent-freshness tick. Public so the event-loop watcher can be rescheduled after unserialize.
+     * Consent-freshness tick.
+     *
+     * Scheduled only as the first-class callable `$this->onConsentTimer(...)` handed to
+     * EventLoop::repeat(), including when the watcher is re-armed after unserialize. That callable
+     * captures this method's private scope, so the event loop can drive it while it stays private.
      */
-    public function onConsentTimer(): void
+    private function onConsentTimer(): void
     {
         foreach ($this->nominated as $pair) {
             $message = $this->buildBindingMessage($pair, false);
