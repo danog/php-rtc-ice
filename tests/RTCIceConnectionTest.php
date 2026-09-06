@@ -94,7 +94,11 @@ class RTCIceConnectionTest extends TestCase
         );
         if (PHP_OS_FAMILY === 'Windows') {
             $config = preg_replace('~^syslog\s*$~m', '', (string) $config) ?? (string) $config;
-            $config .= "\nlistening-ip=127.0.0.1\nrelay-ip=127.0.0.1\nexternal-ip=127.0.0.1\n";
+            // The cygwin build can't open a Win32 log-file path; log to stdout, which proc_open
+            // captures into self::$turnServerLog. verbose gives per-session detail so CI can see
+            // whether STUN/TURN requests reach Coturn at all.
+            $config = preg_replace('~^log-file=.*$~m', 'log-file=stdout', (string) $config) ?? (string) $config;
+            $config .= "\nlistening-ip=127.0.0.1\nrelay-ip=127.0.0.1\nexternal-ip=127.0.0.1\nverbose\n";
         }
         if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
             throw new \RuntimeException('Could not write the temporary Coturn test configuration.');
