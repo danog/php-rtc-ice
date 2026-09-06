@@ -118,6 +118,38 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value 'C:\coturn\turnserver_4.10.0'
           Get-ChildItem 'C:\coturn\turnserver_4.10.0'
 
+      - name: Probe cygwin Coturn STUN/TURN (Windows diagnostics)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $dir = 'C:\coturn\turnserver_4.10.0'
+          $conf = "$env:RUNNER_TEMP\probe-turn.conf"
+          $lines = @(
+            'listening-port=3478',
+            'listening-ip=127.0.0.1',
+            'relay-ip=127.0.0.1',
+            'external-ip=127.0.0.1',
+            'realm=quasarstream.com',
+            'lt-cred-mech',
+            'user=quasarstream:123',
+            'no-tls',
+            'no-dtls',
+            'allow-loopback-peers',
+            'verbose'
+          )
+          Set-Content -Encoding ascii -Path $conf -Value $lines
+          $out = "$env:RUNNER_TEMP\probe-turn.out"
+          $err = "$env:RUNNER_TEMP\probe-turn.err"
+          $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf `
+            -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+          Start-Sleep -Seconds 3
+          Write-Host "===== turnserver stdout ====="; if (Test-Path $out) { Get-Content $out }
+          Write-Host "===== turnserver stderr ====="; if (Test-Path $err) { Get-Content $err }
+          Write-Host "===== turnutils_stunclient -p 3478 127.0.0.1 ====="
+          & "$dir\turnutils_stunclient.exe" -p 3478 127.0.0.1 2>&1 | ForEach-Object { Write-Host $_ }
+          Write-Host "stunclient exit: $LASTEXITCODE"
+          try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
 
