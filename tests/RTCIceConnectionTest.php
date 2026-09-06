@@ -1420,7 +1420,11 @@ class RTCIceConnectionTest extends TestCase
             self::$turnServerConfig = null;
         }
         if (self::$turnServerLog !== null) {
-            @unlink(self::$turnServerLog);
+            // When CI pins the log path (PHP_RTC_COTURN_LOG) it wants to read the log after the
+            // run finishes, so leave that file in place; only clean up the temp file we created.
+            if (!getenv('PHP_RTC_COTURN_LOG')) {
+                @unlink(self::$turnServerLog);
+            }
             self::$turnServerLog = null;
         }
     }
