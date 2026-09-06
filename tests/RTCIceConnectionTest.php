@@ -73,7 +73,10 @@ class RTCIceConnectionTest extends TestCase
         }
 
         $turnServerConfig = tempnam(sys_get_temp_dir(), 'php-rtc-coturn-');
-        $turnServerLog = tempnam(sys_get_temp_dir(), 'php-rtc-coturn-log-');
+        // Honour an explicit log path (set by CI so the runner can print Coturn's log after a
+        // failure); fall back to a temp file locally. Windows tempnam() truncates the prefix to
+        // three characters, so a fixed path is also what makes the file findable there.
+        $turnServerLog = getenv('PHP_RTC_COTURN_LOG') ?: tempnam(sys_get_temp_dir(), 'php-rtc-coturn-log-');
         if ($turnServerConfig === false || $turnServerLog === false) {
             throw new \RuntimeException('Could not create temporary Coturn test files.');
         }
@@ -984,6 +987,7 @@ class RTCIceConnectionTest extends TestCase
             ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['periodicConsentCheck'])
             ->getMock();
+        self::pinLoopbackOnWindows($connection1);
 
         $periodicConsentCheckMock = function () use ($connection1) {
             $failureCount = 0;
@@ -1034,6 +1038,7 @@ class RTCIceConnectionTest extends TestCase
             ->setConstructorArgs([$this->config, IceRole::Controlling])
             ->onlyMethods(['periodicConsentCheck'])
             ->getMock();
+        self::pinLoopbackOnWindows($connection1);
 
         $periodicConsentCheckMock = function () use ($connection1) {
             $failureCount = 0;
@@ -1458,13 +1463,22 @@ class RTCIceConnectionTest extends TestCase
             $config ?? $this->config,
             $iceControlling ? IceRole::Controlling : IceRole::Controlled,
         );
-        // Cygwin Coturn on Windows is reachable from Win32 PHP on loopback, not from a
-        // LAN-bound host-candidate socket (strong host model). Pin host candidates there.
+        self::pinLoopbackOnWindows($connection);
+
+        return $connection;
+    }
+
+    /**
+     * Cygwin Coturn on Windows is reachable from Win32 PHP on loopback, not from a LAN-bound
+     * host-candidate socket (strong host model). Pin host candidates there so every agent in a
+     * test — including the hand-built mocks the consent tests use — gathers and checks over
+     * loopback and can reach both its peer and the local Coturn.
+     */
+    private static function pinLoopbackOnWindows(RTCIceConnection $connection): void
+    {
         if (PHP_OS_FAMILY === 'Windows') {
             $connection->setNat1to1(['127.0.0.1']);
         }
-
-        return $connection;
     }
 
     private function inviteAccept(RTCIceConnection $connection1, RTCIceConnection $connection2): void

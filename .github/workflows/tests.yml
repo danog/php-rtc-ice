@@ -124,3 +124,17 @@ jobs:
       - name: Run PHPUnit tests
         run: vendor/bin/phpunit
         shell: bash
+        env:
+          PHP_RTC_COTURN_LOG: ${{ runner.temp }}/coturn-test.log
+
+      - name: Coturn log (Windows diagnostics)
+        if: ${{ always() && matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\coturn-test.log"
+          if (Test-Path $log) {
+            Write-Host "===== Coturn log ($log) ====="
+            Get-Content $log
+          } else {
+            Write-Host "no Coturn log at $log"
+          }
