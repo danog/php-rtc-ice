@@ -2,7 +2,6 @@
 
 namespace Tests\Webrtc\ICE;
 
-use Evenement\EventEmitter;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\TestCase;
 use Webrtc\ICE\Enum\CandidateType;
@@ -13,8 +12,6 @@ use Webrtc\ICE\RTCIceConnection;
 use Webrtc\ICE\RTCIceParameters;
 use Webrtc\ICE\RTCIceProtocolConfiguration;
 use Webrtc\ICE\RTCIceServer;
-use Webrtc\Mixin\BoundMethod;
-use Webrtc\Mixin\EventReemitter;
 
 #[CoversNothing]
 final class SerializationTest extends TestCase
@@ -73,22 +70,4 @@ final class SerializationTest extends TestCase
         $connection->close();
     }
 
-    public function testBoundMethodAndEventReemitterSerialize(): void
-    {
-        $emitter = new EventEmitter();
-        $this->cycle(new EventReemitter($emitter, 'data'));
-
-        $bound = new BoundMethod(new BoundMethodHost(), 'ping');
-        $this->assertSame(2, $bound(1));
-        $restored = $this->cycle($bound);
-        $this->assertSame(3, $restored(2));
-    }
-}
-
-final class BoundMethodHost
-{
-    public function ping(int $n): int
-    {
-        return $n + 1;
-    }
 }

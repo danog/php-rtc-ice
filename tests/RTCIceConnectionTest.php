@@ -18,6 +18,7 @@ use Webrtc\ICE\Enum\IceRole;
 use Webrtc\ICE\Enum\RTCIceCandidatePairStats;
 use Webrtc\ICE\Enum\TransportPolicyType;
 use Webrtc\ICE\Enum\TransportType;
+use Webrtc\ICE\Listener\IceConnectionDataListener;
 use Webrtc\ICE\RTCIceCandidate;
 use Webrtc\ICE\RTCIceCandidatePair;
 use Webrtc\ICE\RTCIceConnection;
@@ -1487,11 +1488,24 @@ class RTCIceConnectionTest extends TestCase
         $connection1->setRemotePassword($connection2->getLocalPassword());
     }
 
+    /** @var list<IceConnectionDataListener> Keeps typed listeners alive against the WeakMap registry. */
+    private array $keptDataListeners = [];
+
     private function getData(RTCIceConnection $iceConnection, array &$data): void
     {
-        $iceConnection->on('data', function (...$args) use (&$data) {
-            $data [] = $args;
-        });
+        $listener = new class implements IceConnectionDataListener {
+            /** @var array<int, array{string, int}> */
+            public $sink;
+
+            public function onIceConnectionData(string $data, int $componentId): void
+            {
+                $this->sink[] = [$data, $componentId];
+            }
+        };
+        $listener->sink = &$data;
+        // The registry is a WeakMap, so hold a strong reference for the test's lifetime.
+        $this->keptDataListeners[] = $listener;
+        $iceConnection->addDataListener($listener);
     }
 
     /**

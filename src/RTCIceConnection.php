@@ -13,6 +13,8 @@ namespace Webrtc\ICE;
 
 use Evenement\EventEmitter;
 use Override;
+use Webrtc\ICE\Listener\IceConnectionClosedListener;
+use Webrtc\ICE\Listener\IceConnectionDataListener;
 use Psr\Log\LoggerInterface;
 use Ramsey\Uuid\Uuid;
 use Random\RandomException;
@@ -168,6 +170,40 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     /** @var string|null Handle of the consent check timer */
     private ?string $queryConsentTimer = null;
 
+    /** @var \WeakMap<IceConnectionDataListener, null> Registered application-data listeners. */
+    private \WeakMap $dataListeners;
+
+    /** @var \WeakMap<IceConnectionClosedListener, null> Registered close listeners. */
+    private \WeakMap $closedListeners;
+
+    /**
+     * Register a listener for application data received over this connection.
+     *
+     * A typed replacement for on('data'): the listener is a plain object, so it is captured
+     * verbatim by a serialize cycle rather than needing a serializable-closure wrapper. The
+     * registry is a WeakMap, so the caller must keep its own reference — a listener held only here
+     * is collected and drops out on its own.
+     */
+    public function addDataListener(IceConnectionDataListener $listener): void
+    {
+        $this->dataListeners[$listener] = null;
+    }
+
+    /**
+     * Register a listener notified when this connection closes (typed replacement for on('onClose')).
+     */
+    public function addClosedListener(IceConnectionClosedListener $listener): void
+    {
+        $this->closedListeners[$listener] = null;
+    }
+
+    private function notifyClosed(): void
+    {
+        foreach ($this->closedListeners as $listener => $_) {
+            $listener->onIceConnectionClosed();
+        }
+    }
+
     /** Consecutive consent-check failures, reset on a successful check. */
     private int $consentFailureCount = 0;
 
@@ -199,6 +235,10 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->localPassword = Utils::getRandomString(22);
         $this->tieBreaker = Utils::generateRandom64BitInt();
         $this->componentIds = range(1, 1);
+        /** @var \WeakMap<IceConnectionDataListener, null> */
+        $this->dataListeners = new \WeakMap();
+        /** @var \WeakMap<IceConnectionClosedListener, null> */
+        $this->closedListeners = new \WeakMap();
     }
 
     /**
@@ -1710,7 +1750,20 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $interval = $this->calculateConsentInterval();
         $this->consentFailureCount = 0;
 
-        $this->queryConsentTimer = EventLoop::repeat($interval, $this->onConsentTimer(...));
+        // A repeat watcher registered as $this->onConsentTimer(...) captures $this strongly and
+        // would keep the event loop holding this whole ICE connection alive forever, so an
+        // unset()+gc_collect_cycles() could never reclaim it. Hold only a weak reference and let
+        // the tick cancel itself once the owner has been collected.
+        $weak = \WeakReference::create($this);
+        $this->queryConsentTimer = EventLoop::repeat($interval, static function (string $id) use ($weak): void {
+            $self = $weak->get();
+            if ($self === null) {
+                EventLoop::cancel($id);
+
+                return;
+            }
+            $self->onConsentTimer();
+        });
     }
 
     /**
@@ -1744,8 +1797,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->stopPeriodicConsentCheck();
         $this->markCheckListAsFailed();
         $this->clearResources();
-        $this->emit('onClose');
+        $this->notifyClosed();
         $this->removeAllListeners();
+        /** @var \WeakMap<IceConnectionClosedListener, null> */
+        $this->closedListeners = new \WeakMap();
+        /** @var \WeakMap<IceConnectionDataListener, null> */
+        $this->dataListeners = new \WeakMap();
         $this->settleBindingCheck(new RuntimeException("Binding check failed"));
 
         if (!$this->closed) {
@@ -1841,7 +1898,9 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     #[Override]
     public function onDataReceived(string $data, int $componentId): void
     {
-        $this->emit("data", [$data, $componentId]);
+        foreach ($this->dataListeners as $listener => $_) {
+            $listener->onIceConnectionData($data, $componentId);
+        }
     }
 
     /**
@@ -2055,7 +2114,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     #[Override]
     public function onClose(): void
     {
-        $this->emit("onClose");
+        $this->notifyClosed();
     }
 
     /**
@@ -2267,20 +2326,32 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     private function onConsentTimer(): void
     {
+        $weak = \WeakReference::create($this);
         foreach ($this->nominated as $pair) {
             $message = $this->buildBindingMessage($pair, false);
             $remoteAddress = $pair->getRemoteAddress();
 
-            async(function () use ($pair, $message, $remoteAddress): void {
+            // Weak self-reference so an in-flight consent check (which awaits a STUN transaction)
+            // does not pin this connection past an unset(); if it was collected mid-flight, the
+            // check simply stops.
+            async(static function () use ($weak, $pair, $message, $remoteAddress): void {
                 try {
-                    $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
-                    $this->consentFailureCount = 0;
+                    $self = $weak->get();
+                    if ($self === null) {
+                        return;
+                    }
+                    $pair->getProtocol()->request($message, $remoteAddress, $self->remotePassword);
+                    $self->consentFailureCount = 0;
                 } catch (Throwable $e) {
-                    $this->consentFailureCount++;
-                    $this->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
-                    if ($this->consentFailureCount >= self::CONSENT_FAILURES) {
-                        $this->logger?->error("Consent to send expired after {$this->consentFailureCount} failures");
-                        $this->close();
+                    $self = $weak->get();
+                    if ($self === null) {
+                        return;
+                    }
+                    $self->consentFailureCount++;
+                    $self->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
+                    if ($self->consentFailureCount >= self::CONSENT_FAILURES) {
+                        $self->logger?->error("Consent to send expired after {$self->consentFailureCount} failures");
+                        $self->close();
                     }
                 }
             })->ignore();
@@ -2292,11 +2363,18 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     public function __serialize(): array
     {
-        return SerializableState::export($this, [
+        $state = SerializableState::export($this, [
             'bindingCheck' => null,
             'bindingCheckScheduled' => false,
             'queryConsentTimer' => $this->queryConsentTimer !== null,
+            // WeakMaps cannot be serialized; snapshot their keys and rebuild on the far side.
+            'dataListeners' => ['__uninitialized' => true],
+            'closedListeners' => ['__uninitialized' => true],
         ]);
+        $state['__dataListeners'] = SerializableState::weakMapToList($this->dataListeners);
+        $state['__closedListeners'] = SerializableState::weakMapToList($this->closedListeners);
+
+        return $state;
     }
 
     /**
@@ -2304,6 +2382,12 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
      */
     public function __unserialize(array $data): void
     {
+        /** @var list<IceConnectionDataListener> $dataListeners */
+        $dataListeners = $data['__dataListeners'] ?? [];
+        /** @var list<IceConnectionClosedListener> $closedListeners */
+        $closedListeners = $data['__closedListeners'] ?? [];
+        unset($data['__dataListeners'], $data['__closedListeners']);
+
         $restartConsent = false;
         /**
          * @var mixed $value
@@ -2315,6 +2399,10 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
             }
         }
         SerializableState::import($this, $data);
+        /** @var \WeakMap<IceConnectionDataListener, null> */
+        $this->dataListeners = SerializableState::listToWeakMap($dataListeners);
+        /** @var \WeakMap<IceConnectionClosedListener, null> */
+        $this->closedListeners = SerializableState::listToWeakMap($closedListeners);
         $this->bindingCheck = null;
         $this->queryConsentTimer = null;
         if ($restartConsent && $this->nominated !== []) {

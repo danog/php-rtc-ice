@@ -14,9 +14,20 @@ namespace Webrtc\ICE;
 use Evenement\EventEmitterInterface;
 use Webrtc\Exception\InvalidArgumentException;
 use Webrtc\ICE\Enum\IceRole;
+use Webrtc\ICE\Listener\IceTransportDataListener;
+use Webrtc\ICE\Listener\IceTransportDisconnectListener;
 
 interface RTCIceTransportInterface extends EventEmitterInterface
 {
+    /** Register a listener for application data arriving over the transport. */
+    public function addDataListener(IceTransportDataListener $listener): void;
+
+    /** Remove a previously registered data listener. */
+    public function removeDataListener(IceTransportDataListener $listener): void;
+
+    /** Register a listener notified when the transport reports a disconnecting close/error. */
+    public function addDisconnectListener(IceTransportDisconnectListener $listener): void;
+
     public function send(string $bytes): void;
 
     public function getRole(): IceRole;
