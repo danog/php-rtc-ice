@@ -83,29 +83,40 @@ class RTCIceConnectionTest extends TestCase
         self::$turnServerConfig = $turnServerConfig;
         self::$turnServerLog = $turnServerLog;
 
+        // The Windows Coturn is a cygwin build: it reads paths (the -c config file and every
+        // file the config names) as cygwin paths, not Win32 ones. Passing D:\a\... makes it
+        // silently ignore the file and fall back to compiled defaults — which is why it bound
+        // every interface, used no credentials, and opened no UDP listener. Hand it cygwin paths.
+        $isWindows = PHP_OS_FAMILY === 'Windows';
+        $certPath = __DIR__ . '/turnconfig/turnserver.crt';
+        $keyPath  = __DIR__ . '/turnconfig/turnserver.key';
+        $logPath  = (string) self::$turnServerLog;
+        if ($isWindows) {
+            $certPath = self::toCygwinPath($certPath);
+            $keyPath  = self::toCygwinPath($keyPath);
+            $logPath  = self::toCygwinPath($logPath);
+        }
+
         $config = preg_replace(
             ['~^cert=.*$~m', '~^pkey=.*$~m', '~^log-file=.*$~m'],
             [
-                'cert=' . __DIR__ . '/turnconfig/turnserver.crt',
-                'pkey=' . __DIR__ . '/turnconfig/turnserver.key',
-                'log-file=' . self::$turnServerLog,
+                'cert=' . $certPath,
+                'pkey=' . $keyPath,
+                'log-file=' . $logPath,
             ],
             $config,
         );
-        if (PHP_OS_FAMILY === 'Windows') {
+        if ($isWindows) {
             $config = preg_replace('~^syslog\s*$~m', '', (string) $config) ?? (string) $config;
-            // The cygwin build can't open a Win32 log-file path; log to stdout, which proc_open
-            // captures into self::$turnServerLog. verbose gives per-session detail so CI can see
-            // whether STUN/TURN requests reach Coturn at all.
-            $config = preg_replace('~^log-file=.*$~m', 'log-file=stdout', (string) $config) ?? (string) $config;
             $config .= "\nlistening-ip=127.0.0.1\nrelay-ip=127.0.0.1\nexternal-ip=127.0.0.1\nverbose\n";
         }
         if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
             throw new \RuntimeException('Could not write the temporary Coturn test configuration.');
         }
 
+        $configArg = $isWindows ? self::toCygwinPath((string) self::$turnServerConfig) : self::$turnServerConfig;
         self::$turnServerProcess = proc_open(
-            [$binary, '-c', self::$turnServerConfig],
+            [$binary, '-c', $configArg],
             [
                 0 => ['pipe', 'r'],
                 1 => ['file', self::$turnServerLog, 'a'],
@@ -1363,6 +1374,20 @@ class RTCIceConnectionTest extends TestCase
         }
 
         return $port;
+    }
+
+    /**
+     * Translate a Win32 path (D:\a\_temp\file) into the cygwin form (/cygdrive/d/a/_temp/file)
+     * that the cygwin Coturn build understands. Non-drive paths are returned with forward slashes.
+     */
+    private static function toCygwinPath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        if (preg_match('~^([A-Za-z]):/(.*)$~', $path, $m) === 1) {
+            return '/cygdrive/' . strtolower($m[1]) . '/' . $m[2];
+        }
+
+        return $path;
     }
 
     private static function findTurnServerBinary(): ?string
