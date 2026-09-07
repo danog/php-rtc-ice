@@ -123,37 +123,43 @@ jobs:
         shell: pwsh
         run: |
           $dir = 'C:\coturn\turnserver_4.10.0'
+          # cygwin form of a writable temp dir (D:\a\_temp -> /cygdrive/d/a/_temp), which the
+          # cygwin turnserver can actually open for its log-file.
+          $tmp = $env:RUNNER_TEMP
+          $cygTmp = '/cygdrive/' + $tmp.Substring(0,1).ToLower() + ($tmp.Substring(2) -replace '\\','/')
           function Probe($tag, $extra) {
             Write-Host "########## PROBE: $tag ##########"
-            $conf = "$env:RUNNER_TEMP\probe-$tag.conf"
+            $conf   = "$tmp\probe-$tag.conf"
+            $logWin = "$tmp\turnprobe-$tag.log"
+            $logCyg = "$cygTmp/turnprobe-$tag.log"
             $base = @(
               'listening-port=3478','listening-ip=127.0.0.1','relay-ip=127.0.0.1',
               'external-ip=127.0.0.1','realm=quasarstream.com','lt-cred-mech',
               'user=quasarstream:123','no-tls','no-dtls','allow-loopback-peers',
-              'verbose','simple-log','log-file=/cygdrive/c/turnprobe.log'
+              'verbose','simple-log',"log-file=$logCyg"
             )
             Set-Content -Encoding ascii -Path $conf -Value ($base + $extra)
-            if (Test-Path 'C:\turnprobe.log') { Remove-Item 'C:\turnprobe.log' -Force }
+            if (Test-Path $logWin) { Remove-Item $logWin -Force }
             $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf -PassThru -NoNewWindow
             Start-Sleep -Seconds 4
-            Write-Host "----- General servers / bind summary -----"
-            if (Test-Path 'C:\turnprobe.log') {
-              Get-Content 'C:\turnprobe.log' | Select-String -Pattern 'General servers|cpu num|listener opened|Cannot bind|UDP' | Select-Object -First 12
-            } else { Write-Host 'no startup log' }
-            Write-Host "----- netstat UDP :3478 -----"
-            (netstat -an -p UDP | Select-String ':3478') -join "`n"
+            Write-Host "----- startup log (key lines) -----"
+            if (Test-Path $logWin) {
+              Get-Content $logWin | Select-String -Pattern 'General servers|cpu num|listener opened|Cannot bind|UDP|Address already' | Select-Object -First 15 | ForEach-Object { Write-Host $_ }
+            } else { Write-Host "no log at $logWin" }
+            $udp = (netstat -an -p UDP | Select-String ':3478')
+            Write-Host "----- netstat UDP :3478 -----  count=$(@($udp).Count)"
+            $udp | ForEach-Object { Write-Host $_ }
             Write-Host "----- turnutils_stunclient (bounded 10s) -----"
-            $o = "$env:RUNNER_TEMP\sc-$tag.out"
+            $o = "$tmp\sc-$tag.out"
             $sc = Start-Process -FilePath "$dir\turnutils_stunclient.exe" -ArgumentList '-p','3478','127.0.0.1' `
               -RedirectStandardOutput $o -RedirectStandardError "$o.err" -PassThru -NoNewWindow
             if ($sc.WaitForExit(10000)) { Write-Host "stunclient exit: $($sc.ExitCode)" }
             else { try { $sc.Kill() } catch {}; Write-Host 'stunclient TIMED OUT (no UDP STUN response)' }
-            Get-Content $o, "$o.err" -ErrorAction SilentlyContinue
+            Get-Content $o, "$o.err" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
             try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
             Start-Sleep -Seconds 1
           }
-          Probe 'default' @()
-          Probe 'cpus1'   @('cpus=1')
+          Probe 'suite' @()
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
