@@ -108,6 +108,11 @@ class RTCIceConnectionTest extends TestCase
         );
         if ($isWindows) {
             $config = preg_replace('~^syslog\s*$~m', '', (string) $config) ?? (string) $config;
+            // cygwin doesn't honour SO_REUSEPORT, so Coturn's default "UDP thread per CPU core"
+            // model fails to bind every listener socket after the first (errno=112, Address already
+            // in use) and ends up with no UDP listener at all — no STUN/TURN over UDP. relay-threads=0
+            // runs the listener in a single thread with a single UDP socket, which binds cleanly.
+            $config = preg_replace('~^relay-threads=.*$~m', 'relay-threads=0', (string) $config) ?? (string) $config;
             $config .= "\nlistening-ip=127.0.0.1\nrelay-ip=127.0.0.1\nexternal-ip=127.0.0.1\nverbose\n";
         }
         if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
