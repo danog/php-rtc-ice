@@ -135,19 +135,23 @@ jobs:
             'no-tls',
             'no-dtls',
             'allow-loopback-peers',
-            'verbose'
+            'verbose',
+            'simple-log',
+            'log-file=/cygdrive/c/turnprobe.log'
           )
           Set-Content -Encoding ascii -Path $conf -Value $lines
-          $out = "$env:RUNNER_TEMP\probe-turn.out"
-          $err = "$env:RUNNER_TEMP\probe-turn.err"
-          $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf `
-            -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
-          Start-Sleep -Seconds 3
-          Write-Host "===== turnserver stdout ====="; if (Test-Path $out) { Get-Content $out }
-          Write-Host "===== turnserver stderr ====="; if (Test-Path $err) { Get-Content $err }
-          Write-Host "===== turnutils_stunclient -p 3478 127.0.0.1 ====="
-          & "$dir\turnutils_stunclient.exe" -p 3478 127.0.0.1 2>&1 | ForEach-Object { Write-Host $_ }
-          Write-Host "stunclient exit: $LASTEXITCODE"
+          if (Test-Path 'C:\turnprobe.log') { Remove-Item 'C:\turnprobe.log' -Force }
+          # turnserver logs to its own cygwin path (reliable, unlike the redirected stdout of a
+          # cygwin exe). Give it a few seconds to bind, then read the verbose startup log and ask
+          # the OS which 3478 listeners actually exist.
+          $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
+          Write-Host "===== turnserver startup log ====="
+          if (Test-Path 'C:\turnprobe.log') { Get-Content 'C:\turnprobe.log' } else { Write-Host 'no startup log written' }
+          Write-Host "===== UDP :3478 listeners ====="
+          (netstat -an -p UDP | Select-String ':3478') -join "`n"
+          Write-Host "===== TCP :3478 listeners ====="
+          (netstat -an -p TCP | Select-String ':3478') -join "`n"
           try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
 
       - name: Run Psalm
