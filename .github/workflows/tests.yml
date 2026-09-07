@@ -123,36 +123,37 @@ jobs:
         shell: pwsh
         run: |
           $dir = 'C:\coturn\turnserver_4.10.0'
-          $conf = "$env:RUNNER_TEMP\probe-turn.conf"
-          $lines = @(
-            'listening-port=3478',
-            'listening-ip=127.0.0.1',
-            'relay-ip=127.0.0.1',
-            'external-ip=127.0.0.1',
-            'realm=quasarstream.com',
-            'lt-cred-mech',
-            'user=quasarstream:123',
-            'no-tls',
-            'no-dtls',
-            'allow-loopback-peers',
-            'verbose',
-            'simple-log',
-            'log-file=/cygdrive/c/turnprobe.log'
-          )
-          Set-Content -Encoding ascii -Path $conf -Value $lines
-          if (Test-Path 'C:\turnprobe.log') { Remove-Item 'C:\turnprobe.log' -Force }
-          # turnserver logs to its own cygwin path (reliable, unlike the redirected stdout of a
-          # cygwin exe). Give it a few seconds to bind, then read the verbose startup log and ask
-          # the OS which 3478 listeners actually exist.
-          $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf -PassThru -NoNewWindow
-          Start-Sleep -Seconds 5
-          Write-Host "===== turnserver startup log ====="
-          if (Test-Path 'C:\turnprobe.log') { Get-Content 'C:\turnprobe.log' } else { Write-Host 'no startup log written' }
-          Write-Host "===== UDP :3478 listeners ====="
-          (netstat -an -p UDP | Select-String ':3478') -join "`n"
-          Write-Host "===== TCP :3478 listeners ====="
-          (netstat -an -p TCP | Select-String ':3478') -join "`n"
-          try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+          function Probe($tag, $extra) {
+            Write-Host "########## PROBE: $tag ##########"
+            $conf = "$env:RUNNER_TEMP\probe-$tag.conf"
+            $base = @(
+              'listening-port=3478','listening-ip=127.0.0.1','relay-ip=127.0.0.1',
+              'external-ip=127.0.0.1','realm=quasarstream.com','lt-cred-mech',
+              'user=quasarstream:123','no-tls','no-dtls','allow-loopback-peers',
+              'verbose','simple-log','log-file=/cygdrive/c/turnprobe.log'
+            )
+            Set-Content -Encoding ascii -Path $conf -Value ($base + $extra)
+            if (Test-Path 'C:\turnprobe.log') { Remove-Item 'C:\turnprobe.log' -Force }
+            $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf -PassThru -NoNewWindow
+            Start-Sleep -Seconds 4
+            Write-Host "----- General servers / bind summary -----"
+            if (Test-Path 'C:\turnprobe.log') {
+              Get-Content 'C:\turnprobe.log' | Select-String -Pattern 'General servers|cpu num|listener opened|Cannot bind|UDP' | Select-Object -First 12
+            } else { Write-Host 'no startup log' }
+            Write-Host "----- netstat UDP :3478 -----"
+            (netstat -an -p UDP | Select-String ':3478') -join "`n"
+            Write-Host "----- turnutils_stunclient (bounded 10s) -----"
+            $o = "$env:RUNNER_TEMP\sc-$tag.out"
+            $sc = Start-Process -FilePath "$dir\turnutils_stunclient.exe" -ArgumentList '-p','3478','127.0.0.1' `
+              -RedirectStandardOutput $o -RedirectStandardError "$o.err" -PassThru -NoNewWindow
+            if ($sc.WaitForExit(10000)) { Write-Host "stunclient exit: $($sc.ExitCode)" }
+            else { try { $sc.Kill() } catch {}; Write-Host 'stunclient TIMED OUT (no UDP STUN response)' }
+            Get-Content $o, "$o.err" -ErrorAction SilentlyContinue
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Start-Sleep -Seconds 1
+          }
+          Probe 'default' @()
+          Probe 'cpus1'   @('cpus=1')
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
