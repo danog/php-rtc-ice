@@ -76,7 +76,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # Host-candidate sockets bind a LAN address. The public-profile firewall
-          # drops hairpin UDP to that address (Coturn / mDNS / ICE checks), which
+          # drops hairpin UDP to that address (STUN/TURN / mDNS / ICE checks), which
           # Linux does not. Disable it so the same-interface path works.
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           Get-NetFirewallProfile | Format-Table Name, Enabled
@@ -87,79 +87,22 @@ jobs:
           netsh interface ipv6 add address "Loopback Pseudo-Interface 1" fd00:1:2:3::1
           netsh interface ipv6 show address
 
-      - name: Install Coturn (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y coturn
-          # The PHPUnit suite owns the Coturn process and its lifecycle.
-          sudo systemctl stop coturn || true
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: tests/turnserver/go.sum
 
-      - name: Install Coturn (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Build the pion/turn test server
+        shell: bash
         run: |
-          brew install coturn
-
-      - name: Install Coturn (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # Coturn ships no official Windows package; this is a pinned, checksum-verified
-          # Cygwin build (turnserver.exe plus its cygwin DLLs). The suite spawns and owns it.
-          $ErrorActionPreference = 'Stop'
-          $url = 'https://github.com/SjoerdNLD/coturn_cygwin_build/releases/download/4.10.0/turnserver_4.10.0_cygwinbuild.zip'
-          $zip = "$env:RUNNER_TEMP\coturn.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          $expected = '5F319594EECBA0A15251C1D78B8014B8878BF9E2A40C70DEE79B8EE5D9FA047C'
-          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash
-          if ($actual -ne $expected) { throw "coturn zip checksum mismatch: got $actual" }
-          Expand-Archive -Path $zip -DestinationPath 'C:\coturn' -Force
-          # turnserver.exe loads its cygwin DLLs from its own directory, so put that on PATH.
-          Add-Content -Path $env:GITHUB_PATH -Value 'C:\coturn\turnserver_4.10.0'
-          Get-ChildItem 'C:\coturn\turnserver_4.10.0'
-
-      - name: Probe cygwin Coturn STUN/TURN (Windows diagnostics)
-        if: ${{ matrix.os == 'windows-latest' }}
-        shell: pwsh
-        run: |
-          $dir = 'C:\coturn\turnserver_4.10.0'
-          # cygwin form of a writable temp dir (D:\a\_temp -> /cygdrive/d/a/_temp), which the
-          # cygwin turnserver can actually open for its log-file.
-          $tmp = $env:RUNNER_TEMP
-          $cygTmp = '/cygdrive/' + $tmp.Substring(0,1).ToLower() + ($tmp.Substring(2) -replace '\\','/')
-          function Probe($tag, $extra) {
-            Write-Host "########## PROBE: $tag ##########"
-            $conf   = "$tmp\probe-$tag.conf"
-            $logWin = "$tmp\turnprobe-$tag.log"
-            $logCyg = "$cygTmp/turnprobe-$tag.log"
-            $base = @(
-              'listening-port=3478','listening-ip=127.0.0.1','relay-ip=127.0.0.1',
-              'external-ip=127.0.0.1','realm=quasarstream.com','lt-cred-mech',
-              'user=quasarstream:123','no-tls','no-dtls','allow-loopback-peers',
-              'verbose','simple-log',"log-file=$logCyg"
-            )
-            Set-Content -Encoding ascii -Path $conf -Value ($base + $extra)
-            if (Test-Path $logWin) { Remove-Item $logWin -Force }
-            $p = Start-Process -FilePath "$dir\turnserver.exe" -ArgumentList '-c', $conf -PassThru -NoNewWindow
-            Start-Sleep -Seconds 4
-            Write-Host "----- startup log (key lines) -----"
-            if (Test-Path $logWin) {
-              Get-Content $logWin | Select-String -Pattern 'General servers|cpu num|listener opened|Cannot bind|UDP|Address already' | Select-Object -First 15 | ForEach-Object { Write-Host $_ }
-            } else { Write-Host "no log at $logWin" }
-            $udp = (netstat -an -p UDP | Select-String ':3478')
-            Write-Host "----- netstat UDP :3478 -----  count=$(@($udp).Count)"
-            $udp | ForEach-Object { Write-Host $_ }
-            Write-Host "----- turnutils_stunclient (bounded 10s) -----"
-            $o = "$tmp\sc-$tag.out"
-            $sc = Start-Process -FilePath "$dir\turnutils_stunclient.exe" -ArgumentList '-p','3478','127.0.0.1' `
-              -RedirectStandardOutput $o -RedirectStandardError "$o.err" -PassThru -NoNewWindow
-            if ($sc.WaitForExit(10000)) { Write-Host "stunclient exit: $($sc.ExitCode)" }
-            else { try { $sc.Kill() } catch {}; Write-Host 'stunclient TIMED OUT (no UDP STUN response)' }
-            Get-Content $o, "$o.err" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Start-Sleep -Seconds 1
-          }
-          Probe 'suite' @()
+          # The suite spawns this single-UDP-socket STUN/TURN server on every platform, in place
+          # of coturn (whose Windows cygwin build cannot bind its per-CPU SO_REUSEPORT UDP
+          # listeners). PHP_RTC_TURN_BINARY tells the suite to use this prebuilt binary.
+          bin="$RUNNER_TEMP/php-rtc-turnserver"
+          [ "$RUNNER_OS" = "Windows" ] && bin="${bin}.exe"
+          ( cd tests/turnserver && go build -o "$bin" . )
+          echo "PHP_RTC_TURN_BINARY=$bin" >> "$GITHUB_ENV"
 
       - name: Run Psalm
         run: vendor/bin/psalm --no-progress
@@ -167,17 +110,3 @@ jobs:
       - name: Run PHPUnit tests
         run: vendor/bin/phpunit
         shell: bash
-        env:
-          PHP_RTC_COTURN_LOG: ${{ runner.temp }}/coturn-test.log
-
-      - name: Coturn log (Windows diagnostics)
-        if: ${{ always() && matrix.os == 'windows-latest' }}
-        shell: pwsh
-        run: |
-          $log = "$env:RUNNER_TEMP\coturn-test.log"
-          if (Test-Path $log) {
-            Write-Host "===== Coturn log ($log) ====="
-            Get-Content $log
-          } else {
-            Write-Host "no Coturn log at $log"
-          }

@@ -47,8 +47,8 @@ class RTCIceConnectionTest extends TestCase
 {
     /** @var resource|null */
     private static mixed $turnServerProcess = null;
-    private static ?string $turnServerConfig = null;
     private static ?string $turnServerLog = null;
+    private static ?string $turnServerBinaryBuilt = null;
     private static ?string $turnServerUnavailableReason = null;
 
     private RTCIceProtocolConfiguration $config;
@@ -61,67 +61,23 @@ class RTCIceConnectionTest extends TestCase
             return;
         }
 
-        $binary = self::findTurnServerBinary();
+        $binary = self::turnServerBinary();
         if ($binary === null) {
-            self::$turnServerUnavailableReason = 'The turnserver binary is not installed.';
+            self::$turnServerUnavailableReason =
+                'The pion/turn test server is unavailable (set PHP_RTC_TURN_BINARY, or install the Go toolchain so it can be built).';
             return;
         }
 
-        $config = file_get_contents(__DIR__ . '/turnconfig/turnserver.conf');
-        if ($config === false) {
-            throw new \RuntimeException('Could not read the Coturn test configuration.');
+        $turnServerLog = tempnam(sys_get_temp_dir(), 'php-rtc-turn-log-');
+        if ($turnServerLog === false) {
+            throw new \RuntimeException('Could not create the temporary TURN server log file.');
         }
-
-        $turnServerConfig = tempnam(sys_get_temp_dir(), 'php-rtc-coturn-');
-        // Honour an explicit log path (set by CI so the runner can print Coturn's log after a
-        // failure); fall back to a temp file locally. Windows tempnam() truncates the prefix to
-        // three characters, so a fixed path is also what makes the file findable there.
-        $turnServerLog = getenv('PHP_RTC_COTURN_LOG') ?: tempnam(sys_get_temp_dir(), 'php-rtc-coturn-log-');
-        if ($turnServerConfig === false || $turnServerLog === false) {
-            throw new \RuntimeException('Could not create temporary Coturn test files.');
-        }
-        self::$turnServerConfig = $turnServerConfig;
         self::$turnServerLog = $turnServerLog;
 
-        // The Windows Coturn is a cygwin build: it reads paths (the -c config file and every
-        // file the config names) as cygwin paths, not Win32 ones. Passing D:\a\... makes it
-        // silently ignore the file and fall back to compiled defaults — which is why it bound
-        // every interface, used no credentials, and opened no UDP listener. Hand it cygwin paths.
-        $isWindows = PHP_OS_FAMILY === 'Windows';
-        $certPath = __DIR__ . '/turnconfig/turnserver.crt';
-        $keyPath  = __DIR__ . '/turnconfig/turnserver.key';
-        $logPath  = (string) self::$turnServerLog;
-        if ($isWindows) {
-            $certPath = self::toCygwinPath($certPath);
-            $keyPath  = self::toCygwinPath($keyPath);
-            $logPath  = self::toCygwinPath($logPath);
-        }
-
-        $config = preg_replace(
-            ['~^cert=.*$~m', '~^pkey=.*$~m', '~^log-file=.*$~m'],
-            [
-                'cert=' . $certPath,
-                'pkey=' . $keyPath,
-                'log-file=' . $logPath,
-            ],
-            $config,
-        );
-        if ($isWindows) {
-            $config = preg_replace('~^syslog\s*$~m', '', (string) $config) ?? (string) $config;
-            // cygwin doesn't honour SO_REUSEPORT, so Coturn's default "UDP thread per CPU core"
-            // model fails to bind every listener socket after the first (errno=112, Address already
-            // in use) and ends up with no UDP listener at all — no STUN/TURN over UDP. relay-threads=0
-            // runs the listener in a single thread with a single UDP socket, which binds cleanly.
-            $config = preg_replace('~^relay-threads=.*$~m', 'relay-threads=0', (string) $config) ?? (string) $config;
-            $config .= "\nlistening-ip=127.0.0.1\nrelay-ip=127.0.0.1\nexternal-ip=127.0.0.1\nverbose\n";
-        }
-        if ($config === null || file_put_contents(self::$turnServerConfig, $config) === false) {
-            throw new \RuntimeException('Could not write the temporary Coturn test configuration.');
-        }
-
-        $configArg = $isWindows ? self::toCygwinPath((string) self::$turnServerConfig) : self::$turnServerConfig;
+        // The pion/turn server takes no configuration: it listens on 127.0.0.1:3478 (UDP and TCP)
+        // with the long-term credentials the tests use, and writes any diagnostics to stderr.
         self::$turnServerProcess = proc_open(
-            [$binary, '-c', $configArg],
+            [$binary],
             [
                 0 => ['pipe', 'r'],
                 1 => ['file', self::$turnServerLog, 'a'],
@@ -132,7 +88,7 @@ class RTCIceConnectionTest extends TestCase
         );
         if (!is_resource(self::$turnServerProcess)) {
             self::removeTurnServerFiles();
-            throw new \RuntimeException('Could not start Coturn for the test suite.');
+            throw new \RuntimeException('Could not start the pion/turn test server.');
         }
 
         fclose($pipes[0]);
@@ -153,7 +109,7 @@ class RTCIceConnectionTest extends TestCase
 
         $log = self::$turnServerLog === null ? '' : (string) @file_get_contents(self::$turnServerLog);
         self::stopTurnServer();
-        throw new \RuntimeException("Coturn did not become ready.\n" . $log);
+        throw new \RuntimeException("The pion/turn test server did not become ready.\n" . $log);
     }
 
     public static function tearDownAfterClass(): void
@@ -1382,23 +1338,66 @@ class RTCIceConnectionTest extends TestCase
     }
 
     /**
-     * Translate a Win32 path (D:\a\_temp\file) into the cygwin form (/cygdrive/d/a/_temp/file)
-     * that the cygwin Coturn build understands. Non-drive paths are returned with forward slashes.
+     * Resolve the pion/turn test-server binary (tests/turnserver). CI prebuilds it and points
+     * PHP_RTC_TURN_BINARY at it; otherwise it is built on demand with the Go toolchain. Returns
+     * null when no binary can be produced (e.g. Go is not installed), so the STUN/TURN tests skip
+     * rather than error.
      */
-    private static function toCygwinPath(string $path): string
+    private static function turnServerBinary(): ?string
     {
-        $path = str_replace('\\', '/', $path);
-        if (preg_match('~^([A-Za-z]):/(.*)$~', $path, $m) === 1) {
-            return '/cygdrive/' . strtolower($m[1]) . '/' . $m[2];
+        $env = getenv('PHP_RTC_TURN_BINARY');
+        if ($env !== false && $env !== '' && is_file($env) && is_executable($env)) {
+            return $env;
         }
 
-        return $path;
+        return self::buildTurnServer();
     }
 
-    private static function findTurnServerBinary(): ?string
+    private static function buildTurnServer(): ?string
     {
-        // Windows names the executable turnserver.exe; POSIX has no suffix.
-        $names = DIRECTORY_SEPARATOR === '\\' ? ['turnserver.exe', 'turnserver'] : ['turnserver'];
+        $go = self::findGoBinary();
+        if ($go === null) {
+            return null;
+        }
+
+        $out = tempnam(sys_get_temp_dir(), 'php-rtc-turn-');
+        if ($out === false) {
+            return null;
+        }
+        if (DIRECTORY_SEPARATOR === '\\') {
+            @unlink($out);
+            $out .= '.exe';
+        }
+
+        $process = proc_open(
+            [$go, 'build', '-o', $out, '.'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            __DIR__ . DIRECTORY_SEPARATOR . 'turnserver',
+        );
+        if (!is_resource($process)) {
+            @unlink($out);
+            return null;
+        }
+        $stderr = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($process);
+        if ($exit !== 0 || !is_file($out)) {
+            @unlink($out);
+            fwrite(STDERR, "Could not build the pion/turn test server:\n" . $stderr . "\n");
+            return null;
+        }
+
+        // Remember it so tearDownAfterClass can remove the temporary binary.
+        self::$turnServerBinaryBuilt = $out;
+
+        return $out;
+    }
+
+    private static function findGoBinary(): ?string
+    {
+        $names = DIRECTORY_SEPARATOR === '\\' ? ['go.exe', 'go'] : ['go'];
         foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $directory) {
             foreach ($names as $name) {
                 $binary = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
@@ -1449,29 +1448,25 @@ class RTCIceConnectionTest extends TestCase
 
     private static function removeTurnServerFiles(): void
     {
-        if (self::$turnServerConfig !== null) {
-            @unlink(self::$turnServerConfig);
-            self::$turnServerConfig = null;
-        }
         if (self::$turnServerLog !== null) {
-            // When CI pins the log path (PHP_RTC_COTURN_LOG) it wants to read the log after the
-            // run finishes, so leave that file in place; only clean up the temp file we created.
-            if (!getenv('PHP_RTC_COTURN_LOG')) {
-                @unlink(self::$turnServerLog);
-            }
+            @unlink(self::$turnServerLog);
             self::$turnServerLog = null;
+        }
+        if (self::$turnServerBinaryBuilt !== null) {
+            @unlink(self::$turnServerBinaryBuilt);
+            self::$turnServerBinaryBuilt = null;
         }
     }
 
     private function requireLocalTurnServer(): void
     {
         if (!self::turnServerIsReady()) {
-            $this->markTestSkipped(self::$turnServerUnavailableReason ?? 'The test-managed Coturn server is unavailable.');
+            $this->markTestSkipped(self::$turnServerUnavailableReason ?? 'The test-managed STUN/TURN server is unavailable.');
         }
     }
 
     /**
-     * Loopback address of the test-managed Coturn server.
+     * Loopback address of the test-managed STUN/TURN server.
      *
      * Windows tests also bind host candidates to 127.0.0.1 (see iceConnection()), so the
      * STUN/TURN path is loopback-to-loopback and does not depend on the strong host model.
@@ -1507,10 +1502,10 @@ class RTCIceConnectionTest extends TestCase
     }
 
     /**
-     * Cygwin Coturn on Windows is reachable from Win32 PHP on loopback, not from a LAN-bound
-     * host-candidate socket (strong host model). Pin host candidates there so every agent in a
-     * test — including the hand-built mocks the consent tests use — gathers and checks over
-     * loopback and can reach both its peer and the local Coturn.
+     * On Windows a LAN-bound host-candidate socket cannot reach a loopback-bound peer or the
+     * loopback STUN/TURN server (strong host model). Pin host candidates to 127.0.0.1 so every
+     * agent in a test — including the hand-built mocks the consent tests use — gathers and checks
+     * over loopback and can reach both its peer and the local server.
      */
     private static function pinLoopbackOnWindows(RTCIceConnection $connection): void
     {
