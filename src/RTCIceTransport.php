@@ -11,7 +11,6 @@
 
 namespace Webrtc\ICE;
 
-use Evenement\EventEmitter;
 use Override;
 use Psr\Log\LoggerInterface;
 use Throwable;
@@ -22,6 +21,7 @@ use Webrtc\ICE\Listener\IceConnectionClosedListener;
 use Webrtc\ICE\Listener\IceConnectionDataListener;
 use Webrtc\ICE\Listener\IceTransportDataListener;
 use Webrtc\ICE\Listener\IceTransportDisconnectListener;
+use Webrtc\ICE\Listener\IceTransportStateChangeListener;
 use Webrtc\Mixin\SerializableState;
 
 /**
@@ -34,7 +34,7 @@ use Webrtc\Mixin\SerializableState;
  * data and disconnect it sees to its own typed listeners (the DTLS transport and handshake). These
  * are ordinary objects, so the whole wiring is captured verbatim by a serialize cycle.
  */
-final class RTCIceTransport extends EventEmitter implements RTCIceTransportInterface, IceConnectionDataListener, IceConnectionClosedListener
+final class RTCIceTransport implements RTCIceTransportInterface, IceConnectionDataListener, IceConnectionClosedListener
 {
     /**
      * @var IceTransportState Current transport state.
@@ -57,6 +57,9 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
     /** @var \WeakMap<IceTransportDisconnectListener, null> Listeners for a disconnecting close/error. */
     private \WeakMap $disconnectListeners;
 
+    /** @var \WeakMap<IceTransportStateChangeListener, null> Listeners for transport state changes. */
+    private \WeakMap $statechangeListeners;
+
     /**
      * RTCIceTransport constructor.
      *
@@ -71,6 +74,8 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
         $this->dataListeners = new \WeakMap();
         /** @var \WeakMap<IceTransportDisconnectListener, null> */
         $this->disconnectListeners = new \WeakMap();
+        /** @var \WeakMap<IceTransportStateChangeListener, null> */
+        $this->statechangeListeners = new \WeakMap();
         /** @var RTCIceConnection $iceConnection */
         $iceConnection = $iceGatherer->getIceConnection();
         $this->iceConnection = $iceConnection;
@@ -102,6 +107,17 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
     public function addDisconnectListener(IceTransportDisconnectListener $listener): void
     {
         $this->disconnectListeners[$listener] = null;
+    }
+
+    /**
+     * Register a listener notified when the transport state changes.
+     *
+     * Typed replacement for on('statechange'); the listener is a plain object captured by serialization.
+     */
+    #[\Override]
+    public function addStateChangeListener(IceTransportStateChangeListener $listener): void
+    {
+        $this->statechangeListeners[$listener] = null;
     }
 
     #[\Override]
@@ -237,8 +253,8 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
     }
 
     /**
-     * Set the transport state and emit a statechange event.
-     * Also removes listeners on shutdown to aid garbage collection.
+     * Set the transport state and notify state-change listeners.
+     * Also clears listeners on shutdown to aid garbage collection.
      *
      * @param IceTransportState $state
      * @return void
@@ -253,18 +269,27 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
             ));
 
             $this->state = $state;
-            $this->emit("statechange", [$state]);
+            $this->notifyStateChange($state);
 
             if ($state === IceTransportState::closed) {
-                if ($this->iceGatherer instanceof EventEmitter) {
-                    $this->iceGatherer->removeAllListeners();
-                }
-                $this->removeAllListeners();
                 /** @var \WeakMap<IceTransportDataListener, null> */
                 $this->dataListeners = new \WeakMap();
                 /** @var \WeakMap<IceTransportDisconnectListener, null> */
                 $this->disconnectListeners = new \WeakMap();
+                /** @var \WeakMap<IceTransportStateChangeListener, null> */
+                $this->statechangeListeners = new \WeakMap();
             }
+        }
+    }
+
+    /**
+     * @param IceTransportState $state
+     * @return void
+     */
+    private function notifyStateChange(IceTransportState $state): void
+    {
+        foreach ($this->statechangeListeners as $listener => $_) {
+            $listener->onIceTransportStateChange($state);
         }
     }
 
@@ -345,9 +370,11 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
             // WeakMaps cannot be serialized; snapshot their keys and rebuild on the far side.
             'dataListeners' => ['__uninitialized' => true],
             'disconnectListeners' => ['__uninitialized' => true],
+            'statechangeListeners' => ['__uninitialized' => true],
         ]);
         $state['__dataListeners'] = SerializableState::weakMapToList($this->dataListeners);
         $state['__disconnectListeners'] = SerializableState::weakMapToList($this->disconnectListeners);
+        $state['__statechangeListeners'] = SerializableState::weakMapToList($this->statechangeListeners);
 
         return $state;
     }
@@ -361,12 +388,16 @@ final class RTCIceTransport extends EventEmitter implements RTCIceTransportInter
         $dataListeners = $data['__dataListeners'] ?? [];
         /** @var list<IceTransportDisconnectListener> $disconnectListeners */
         $disconnectListeners = $data['__disconnectListeners'] ?? [];
-        unset($data['__dataListeners'], $data['__disconnectListeners']);
+        /** @var list<IceTransportStateChangeListener> $statechangeListeners */
+        $statechangeListeners = $data['__statechangeListeners'] ?? [];
+        unset($data['__dataListeners'], $data['__disconnectListeners'], $data['__statechangeListeners']);
 
         SerializableState::import($this, $data);
         /** @var \WeakMap<IceTransportDataListener, null> */
         $this->dataListeners = SerializableState::listToWeakMap($dataListeners);
         /** @var \WeakMap<IceTransportDisconnectListener, null> */
         $this->disconnectListeners = SerializableState::listToWeakMap($disconnectListeners);
+        /** @var \WeakMap<IceTransportStateChangeListener, null> */
+        $this->statechangeListeners = SerializableState::listToWeakMap($statechangeListeners);
     }
 }

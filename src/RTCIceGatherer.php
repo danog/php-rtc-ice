@@ -11,12 +11,13 @@
 
 namespace Webrtc\ICE;
 
-use Evenement\EventEmitter;
 use Override;
 use Psr\Log\LoggerInterface;
 use Random\RandomException;
 use Throwable;
 use Webrtc\ICE\Enum\IceGatheringState;
+use Webrtc\ICE\Listener\IceGathererStateChangeListener;
+use Webrtc\Mixin\SerializableState;
 
 /**
  * The RTCIceGatherer is responsible for gathering ICE candidates on the local machine.
@@ -28,10 +29,13 @@ use Webrtc\ICE\Enum\IceGatheringState;
  * Events:
  * - `statechange`: Emitted when the ICE gathering state transitions.
  */
-final class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterface
+final class RTCIceGatherer implements RTCIceGathererInterface
 {
     private RTCIceConnectionInterface $iceConnection;
     private IceGatheringState $state = IceGatheringState::new;
+
+    /** @var \WeakMap<IceGathererStateChangeListener, null> Listeners for gathering state changes. */
+    private \WeakMap $statechangeListeners;
 
     /**
      * Constructs a new RTCIceGatherer instance.
@@ -46,6 +50,9 @@ final class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterfa
      */
     public function __construct(private array $iceServes, ?RTCICESetting $setting = null, ?LoggerInterface $logger = null)
     {
+        /** @var \WeakMap<IceGathererStateChangeListener, null> */
+        $this->statechangeListeners = new \WeakMap();
+
         $protocolParser = new IceProtocolParser($iceServes);
 
         if (!$setting) {
@@ -105,7 +112,17 @@ final class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterfa
     }
 
     /**
-     * Sets the ICE gathering state and emits a `statechange` event.
+     * Register a listener notified when the gathering state changes.
+     *
+     * Typed replacement for on('statechange'); the listener is a plain object captured by serialization.
+     */
+    public function addStateChangeListener(IceGathererStateChangeListener $listener): void
+    {
+        $this->statechangeListeners[$listener] = null;
+    }
+
+    /**
+     * Sets the ICE gathering state and notifies registered state-change listeners.
      *
      * @param IceGatheringState $state The new ICE gathering state.
      *
@@ -114,7 +131,18 @@ final class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterfa
     public function setState(IceGatheringState $state): void
     {
         $this->state = $state;
-        $this->emit("statechange", [$state]);
+        $this->notifyStateChange($state);
+    }
+
+    /**
+     * @param IceGatheringState $state
+     * @return void
+     */
+    private function notifyStateChange(IceGatheringState $state): void
+    {
+        foreach ($this->statechangeListeners as $listener => $_) {
+            $listener->onIceGathererStateChange($state);
+        }
     }
 
     /**
@@ -172,5 +200,33 @@ final class RTCIceGatherer extends EventEmitter implements RTCIceGathererInterfa
     public function setIceConnection(RTCIceConnectionInterface $iceConnection): void
     {
         $this->iceConnection = $iceConnection;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function __serialize(): array
+    {
+        $state = SerializableState::export($this, [
+            // WeakMaps cannot be serialized; snapshot their keys and rebuild on the far side.
+            'statechangeListeners' => ['__uninitialized' => true],
+        ]);
+        $state['__statechangeListeners'] = SerializableState::weakMapToList($this->statechangeListeners);
+
+        return $state;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function __unserialize(array $data): void
+    {
+        /** @var list<IceGathererStateChangeListener> $statechangeListeners */
+        $statechangeListeners = $data['__statechangeListeners'] ?? [];
+        unset($data['__statechangeListeners']);
+
+        SerializableState::import($this, $data);
+        /** @var \WeakMap<IceGathererStateChangeListener, null> */
+        $this->statechangeListeners = SerializableState::listToWeakMap($statechangeListeners);
     }
 }

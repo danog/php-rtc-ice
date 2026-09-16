@@ -11,7 +11,6 @@
 
 namespace Webrtc\ICE;
 
-use Evenement\EventEmitter;
 use Override;
 use Webrtc\ICE\Listener\IceConnectionClosedListener;
 use Webrtc\ICE\Listener\IceConnectionDataListener;
@@ -69,7 +68,7 @@ use function Amp\async;
  * @see https://www.rfc-editor.org/rfc/rfc7675 Consent Freshness RFC 7675
  * @api
  */
-class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface, ReceiverInterface
+class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
 {
     use NetworkAdapter, Mdns, DNS;
 
@@ -1798,7 +1797,6 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
         $this->markCheckListAsFailed();
         $this->clearResources();
         $this->notifyClosed();
-        $this->removeAllListeners();
         /** @var \WeakMap<IceConnectionClosedListener, null> */
         $this->closedListeners = new \WeakMap();
         /** @var \WeakMap<IceConnectionDataListener, null> */
@@ -2118,7 +2116,7 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     }
 
     /**
-     * Emits an 'onError' event when an error occurs.
+     * Invoked when an error occurs.
      *
      * @param Throwable $e The exception or error encountered.
      *
@@ -2127,7 +2125,6 @@ class RTCIceConnection extends EventEmitter implements RTCIceConnectionInterface
     #[Override]
     public function onError(Throwable $e): void
     {
-        $this->emit("onError", [$e]);
     }
 
     /**
