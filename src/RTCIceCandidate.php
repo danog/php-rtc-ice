@@ -307,16 +307,16 @@ class RTCIceCandidate implements IceCandidateInterface
             throw new InvalidArgumentException("SDP does not have enough properties");
         }
 
-        $candidate = new self((int)$sdpParts[1]);
+        $candidate = new self(self::parseIntField($sdpParts[1], "component id"));
         $candidate->setFoundation($sdpParts[0] ?? null);
-        $candidate->setPriority((int)$sdpParts[3]);
+        $candidate->setPriority(self::parseIntField($sdpParts[3], "priority"));
         $candidate->setTransport(match (strtolower($sdpParts[2])) {
             'udp' => TransportType::udp,
             'tcp' => TransportType::tcp,
             default => throw new InvalidArgumentException("Invalid transport type"),
         });
         $candidate->setHost($sdpParts[4]);
-        $candidate->setPort((int)$sdpParts[5]);
+        $candidate->setPort(self::parseIntField($sdpParts[5], "port"));
         $candidate->setType(match ($sdpParts[7]) {
             'host' => CandidateType::host,
             'srflx' => CandidateType::srflx,
@@ -332,18 +332,35 @@ class RTCIceCandidate implements IceCandidateInterface
                     $candidate->setRelatedAddress($sdpParts[$i + 1]);
                     break;
                 case "rport":
-                    $candidate->setRelatedPort((int)$sdpParts[$i + 1]);
+                    $candidate->setRelatedPort(self::parseIntField($sdpParts[$i + 1] ?? '', "rport"));
                     break;
                 case "tcptype":
                     $candidate->setTcpType($sdpParts[$i + 1]);
                     break;
                 case "generation":
-                    $candidate->setGeneration((int)$sdpParts[$i + 1]);
+                    $candidate->setGeneration(self::parseIntField($sdpParts[$i + 1] ?? '', "generation"));
                     break;
             }
         }
 
         return $candidate;
+    }
+
+    /**
+     * Parses a non-negative integer field from an untrusted remote ICE candidate line.
+     *
+     * A bare (int) cast turns a malformed token into 0 — an invalid port/priority/component is
+     * then accepted as a well-formed candidate with garbage values and only fails opaquely during
+     * connectivity checks, hiding that the candidate line itself was malformed.
+     *
+     * @throws InvalidArgumentException When $value is not a base-10 non-negative integer.
+     */
+    private static function parseIntField(string $value, string $field): int
+    {
+        if (!ctype_digit($value)) {
+            throw new InvalidArgumentException("Invalid $field in ICE candidate, expected a non-negative integer: \"$value\"");
+        }
+        return (int)$value;
     }
 
     /**

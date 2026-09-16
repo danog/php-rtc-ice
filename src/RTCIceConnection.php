@@ -655,7 +655,8 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     {
         try {
             return Stun::create($this, new InternetAddress($address, 0), $this->logger, $this->icePortRange);
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            $this->logger?->debug("Couldn't create STUN interface for {$address}: {$e->getMessage()}");
             return false;
         }
     }
@@ -1566,7 +1567,8 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         try {
             $this->startCheckBinding($pair);
             return true;
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            $this->logger?->debug("Couldn't start connectivity check for candidate pair: {$e->getMessage()}");
             return false;
         }
     }
