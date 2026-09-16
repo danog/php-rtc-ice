@@ -144,4 +144,37 @@ class RTCIceCandidateTest extends TestCase
             (string)$candidate
         );
     }
+
+    // Regression: parseSDP used bare (int) casts, so a malformed numeric field silently became 0
+    // (an invalid port/priority/component accepted as a well-formed candidate). It must now reject.
+
+    public function testFromSdpRejectsNonNumericPort()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        RTCIceCandidate::parseSDP("6815297761 1 udp 659136 1.2.3.4 abc typ host");
+    }
+
+    public function testFromSdpRejectsNonNumericPriority()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        RTCIceCandidate::parseSDP("6815297761 1 udp notanumber 1.2.3.4 31102 typ host");
+    }
+
+    public function testFromSdpRejectsNonNumericComponent()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        RTCIceCandidate::parseSDP("6815297761 x udp 659136 1.2.3.4 31102 typ host");
+    }
+
+    public function testFromSdpRejectsNonNumericRport()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        RTCIceCandidate::parseSDP("6815297761 1 udp 659136 1.2.3.4 31102 typ srflx raddr 5.6.7.8 rport xyz");
+    }
+
+    public function testFromSdpRejectsNonNumericGeneration()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        RTCIceCandidate::parseSDP("6815297761 1 udp 659136 1.2.3.4 31102 typ host generation abc");
+    }
 }
