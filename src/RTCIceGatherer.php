@@ -157,6 +157,19 @@ final class RTCIceGatherer implements RTCIceGathererInterface
     }
 
     /**
+     * Refresh the gathered host candidates from the live sockets after a serialize/unserialize cycle
+     * that may have rebound them to a different local port, and report whether any address changed.
+     * The refreshed candidates are the ones {@see self::getLocalCandidates()} returns.
+     */
+    #[\Override]
+    public function refreshLocalCandidates(): bool
+    {
+        return $this->iceConnection instanceof RTCIceConnection
+            ? $this->iceConnection->refreshLocalCandidates()
+            : false;
+    }
+
+    /**
      * Returns the local ICE parameters (username fragment and password).
      *
      * @return RTCIceParameters The local ICE credentials.

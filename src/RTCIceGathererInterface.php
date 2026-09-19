@@ -21,4 +21,10 @@ interface RTCIceGathererInterface
     /** @return RTCIceCandidate[] */
     public function getLocalCandidates(): array;
     public function getLocalParameters(): RTCIceParameters;
+
+    /**
+     * Refresh the gathered host candidates from the live sockets after a serialize/unserialize cycle
+     * may have rebound them, returning whether any local address changed.
+     */
+    public function refreshLocalCandidates(): bool;
 }

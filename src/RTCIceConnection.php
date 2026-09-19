@@ -463,6 +463,39 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     }
 
     /**
+     * Refresh the host candidates' addresses from the live sockets, and report whether any changed.
+     *
+     * After a serialize/unserialize cycle the underlying UDP sockets may rebind to a different local
+     * port (e.g. when the saved address is no longer assignable). The candidate objects still carry
+     * the old port, which strands the remote peer's checks. This re-reads each host candidate's
+     * address from its (already reconnected) protocol socket, without creating any new socket or
+     * disturbing the running connectivity checks. The caller re-signals the refreshed candidates.
+     *
+     * Server-reflexive and relayed candidates are left untouched: their public mapping can only be
+     * recovered by re-querying the STUN/TURN server, which is out of scope for this in-place refresh.
+     *
+     * @return bool Whether any host candidate's address changed.
+     */
+    public function refreshLocalCandidates(): bool
+    {
+        $changed = false;
+        foreach ($this->protocols as $protocol) {
+            $candidate = $protocol->getCandidate();
+            if (!$candidate instanceof RTCIceCandidate || $candidate->getType() !== CandidateType::host) {
+                continue;
+            }
+            $host = $protocol->getLocalHost();
+            $port = $protocol->getLocalPort();
+            if ($candidate->getHost() !== $host || $candidate->getPort() !== $port) {
+                $candidate->setHost($host);
+                $candidate->setPort($port);
+                $changed = true;
+            }
+        }
+        return $changed;
+    }
+
+    /**
      * Gathers all types of ICE candidates for a specific component.
      *
      * This method combines host candidates, server-reflexive candidates (from STUN servers),
