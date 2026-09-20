@@ -76,7 +76,18 @@ trait NetworkAdapter
         /** @var array<string, array{unicast?: array<int, array{address?: string}>}> $interfaces */
         $interfaces = $this->getInterfaces();
 
-        foreach ($interfaces as $interface) {
+        foreach ($interfaces as $name => $interface) {
+            // Skip virtual interfaces whose addresses cannot route to a public peer/SFU: container
+            // bridges and veths (docker/br-/veth/virbr/cni/flannel/kube), and VPN/overlay adapters
+            // (tailscale/zerotier/tun/tap). On a host with many such interfaces (e.g. a Docker server)
+            // gathering a host candidate on each floods the ICE checklist with unreachable pairs and
+            // the connection times out before the one routable pair is nominated. Set the
+            // RTC_ICE_ALL_INTERFACES env var to keep every interface (the previous behaviour).
+            if (!self::gatherAllInterfaces()
+                && preg_match('/^(docker|br-|veth|virbr|cni|flannel|kube|tailscale|zt|tun|tap|utun|wg)/', (string) $name)
+            ) {
+                continue;
+            }
             foreach ($interface["unicast"] ?? [] as $adapter) {
                 $address = $adapter["address"] ?? null;
                 if (!is_string($address)) {
@@ -88,6 +99,14 @@ trait NetworkAdapter
                     if ($version === false) {
                         continue;
                     }
+                    // Drop non-routable IPv6: link-local (fe80::/10), unique-local (fc00::/7) and the
+                    // RFC 3849 documentation range (2001:db8::/32), which likewise only flood ICE.
+                    if ($version === 6 && !self::gatherAllInterfaces()) {
+                        $lc = strtolower($address);
+                        if (str_starts_with($lc, 'fe80:') || str_starts_with($lc, 'fd') || str_starts_with($lc, 'fc') || str_starts_with($lc, '2001:db8')) {
+                            continue;
+                        }
+                    }
 
                     $hostAddresses[$version === 6 ? "v6" : "v4"][] = $version === 6 ? "[$address]" : $address;
                 }
@@ -96,6 +115,12 @@ trait NetworkAdapter
 
         $this->hostAddressCache = $hostAddresses;
         return $hostAddresses;
+    }
+
+    /** Whether to gather host candidates on every interface, including virtual ones (opt-out escape hatch). */
+    private static function gatherAllInterfaces(): bool
+    {
+        return getenv('RTC_ICE_ALL_INTERFACES') === '1';
     }
 
     /**
