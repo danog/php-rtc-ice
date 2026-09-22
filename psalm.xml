@@ -15,4 +15,10 @@
             <directory name="vendor-bin"/>
         </ignoreFiles>
     </projectFiles>
+    <issueHandlers>
+        <!-- Typed class constants require PHP 8.3. This package still supports 8.2, and Psalm
+             only reports MissingClassConstType for non-final classes, so RTCIceConnection's
+             constants cannot be given native types without dropping 8.2. -->
+        <MissingClassConstType errorLevel="suppress"/>
+    </issueHandlers>
 </psalm>
