@@ -77,11 +77,48 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     /** @var int Maximum number of binding retry attempts */
     private const RETRY_BINDING_MAX = 10;
 
-    /** @var int Maximum number of consent failures before closing */
-    private const CONSENT_FAILURES = 6;
+    /** How often the keepalive timer runs, in seconds. */
+    private const KEEPALIVE_TICK = 0.5;
 
-    /** @var int Interval between consent checks in seconds */
-    private const CONSENT_INTERVAL = 5;
+    /** How often the selected pair is checked, in seconds. */
+    private const KEEPALIVE_INTERVAL = 1.0;
+
+    /** How often the other valid pairs (the backups) are checked, in seconds. */
+    private const BACKUP_INTERVAL = 4.0;
+
+    /** Retransmissions of a keepalive request on the selected pair: an answer can take up to 3.5 seconds. */
+    private const KEEPALIVE_RETRANSMISSIONS = 2;
+
+    /**
+     * Retransmissions of a request on another pair: an answer can take up to 1.5 seconds.
+     *
+     * Kept short, as a request holds its socket, and so the connection, until it ends.
+     */
+    private const BACKUP_RETRANSMISSIONS = 1;
+
+    /** How long the selected pair can go without answering before switching to a backup, in seconds. */
+    private const UNWRITABLE_TIMEOUT = 3.0;
+
+    /** How long a backup can go without answering and still be switched to, in seconds. */
+    private const BACKUP_ALIVE_TIMEOUT = 2.0 * self::BACKUP_INTERVAL + 1.0;
+
+    /** How long a component can go without any pair answering before consent expires (RFC 7675), in seconds. */
+    private const CONSENT_TIMEOUT = 30.0;
+
+    /** A pair is only switched to for its latency if it costs at most this fraction of the selected one... */
+    private const SWITCH_IMPROVEMENT = 0.75;
+
+    /** ...and at least this much less, in seconds: switching between paths that are all fast gains nothing. */
+    private const MIN_SWITCH_GAIN = 0.01;
+
+    /** The minimum time between two switches made for latency, in seconds. */
+    private const MIN_SWITCH_INTERVAL = 10.0;
+
+    /** How many round-trip times must be measured on a pair before switching to it for its latency. */
+    private const MIN_RTT_SAMPLES = 3;
+
+    /** Added to the round-trip time of relayed pairs when comparing them: a direct path is preferred. */
+    private const RELAY_PENALTY = 0.05;
 
     /* Properties */
 
@@ -112,7 +149,7 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     /** @var RTCIceCandidate[] Local ICE candidates */
     private array $localCandidates = [];
 
-    /** @var RTCIceCandidatePair[] Nominated candidate pairs */
+    /** @var array<int, RTCIceCandidatePair> Nominated candidate pairs, by component */
     private array $nominated = [];
 
     /** @var array<int> Components being nominated */
@@ -204,7 +241,20 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     }
 
     /** Consecutive consent-check failures, reset on a successful check. */
-    private int $consentFailureCount = 0;
+    /** When the selected pair of a component was last changed by the keepalive logic (microtime). */
+    private ?float $lastSwitchAt = null;
+
+    /** Whether the keepalive logic changed the selected pair of a component. */
+    private bool $keepaliveSwitched = false;
+
+    /** Multiplies the intervals and timeouts of the keepalives, for tests. */
+    private float $timeScale = 1.0;
+
+    /** Whether the connection is being closed. */
+    private bool $closing = false;
+
+    /** When a pair that was not checked when ICE completed was last checked (microtime). */
+    private ?float $lastDiscoveryAt = null;
 
     /** @var bool Whether waiting for binding response */
     private bool $isBindingWait = false;
@@ -951,17 +1001,24 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
      */
     private function sortCheckList(): void
     {
-        $pairPriority = function (RTCIceCandidatePair $pair): int {
-            $G = $this->isControllingRole() ? $pair->getLocalCandidate()->getPriority() : $pair->getRemoteCandidate()->getPriority();
-            $D = $this->isControllingRole() ? $pair->getRemoteCandidate()->getPriority() : $pair->getLocalCandidate()->getPriority();
-
-            return -((1 << 32) * min($G, $D) + 2 * max($G, $D) + ($G > $D ? 1 : 0));
-        };
-
-        // Sort the candidate pairs using the priority function
-        usort($this->checkList, function (RTCIceCandidatePair $a, RTCIceCandidatePair $b) use ($pairPriority): int {
-            return $pairPriority($a) <=> $pairPriority($b);
+        // Sort the candidate pairs in decreasing order of priority
+        usort($this->checkList, function (RTCIceCandidatePair $a, RTCIceCandidatePair $b): int {
+            return $this->getPairPriority($b) <=> $this->getPairPriority($a);
         });
+    }
+
+    /**
+     * Computes the priority of a candidate pair.
+     *
+     * @see https://datatracker.ietf.org/doc/html/rfc8445#section-6.1.2.3
+     */
+    private function getPairPriority(RTCIceCandidatePair $pair): int
+    {
+        $G = $this->isControllingRole() ? $pair->getLocalCandidate()->getPriority() : $pair->getRemoteCandidate()->getPriority();
+        $D = $this->isControllingRole() ? $pair->getRemoteCandidate()->getPriority() : $pair->getLocalCandidate()->getPriority();
+
+        // Candidate priorities are below 2^31: this fits in a 64-bit integer.
+        return (1 << 32) * min($G, $D) + 2 * max($G, $D) + ($G > $D ? 1 : 0);
     }
 
     /**
@@ -1267,16 +1324,20 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $message = $this->buildBindingMessage($pair, true);
         $remoteAddress = $pair->getRemoteAddress();
 
+        $password = $this->remotePassword;
         // The request blocks, so it runs in its own fiber: the caller drives the check list
-        // and must not stall on one pair's transaction.
-        async(function () use ($pair, $message, $remoteAddress): void {
+        // and must not stall on one pair's transaction. It only holds the connection weakly, so that
+        // a pending request doesn't keep an abandoned connection alive.
+        $weak = \WeakReference::create($this);
+        async(static function () use ($weak, $pair, $message, $remoteAddress, $password): void {
             try {
-                $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
+                $pair->getProtocol()->request($message, $remoteAddress, $password);
                 $pair->setNominated(true);
-                $this->markPairSucceeded($pair);
+                $weak->get()?->markPairSucceeded($pair);
             } catch (Throwable) {
-                $this->logger?->info("Check $pair failed: could not nominate pair");
-                $this->markPairFailed($pair);
+                $self = $weak->get();
+                $self?->logger?->info("Check $pair failed: could not nominate pair");
+                $self?->markPairFailed($pair);
             }
         })->ignore();
     }
@@ -1324,24 +1385,36 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $message = $this->buildBindingMessage($pair, $nominate);
         $remoteAddress = $pair->getRemoteAddress();
 
+        $password = $this->remotePassword;
         // The request blocks, so it runs in its own fiber: several pairs are checked
-        // concurrently and the check list has to keep moving while each is outstanding.
-        async(function () use ($pair, $message, $remoteAddress, $nominate): void {
+        // concurrently and the check list has to keep moving while each is outstanding. It only
+        // holds the connection weakly, so that a pending request doesn't keep an abandoned
+        // connection alive (once established, the peer's checks keep triggering new ones).
+        $weak = \WeakReference::create($this);
+        async(static function () use ($weak, $pair, $message, $remoteAddress, $nominate, $password): void {
             try {
-                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $this->remotePassword);
-                if ($address === null) {
-                    $this->markPairFailed($pair);
+                $start = microtime(true);
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $password);
+                $self = $weak->get();
+                if ($self === null) {
                     return;
                 }
-                $this->handleCheckBinding($address, $pair, $nominate);
+                if ($address === null) {
+                    $self->markPairFailed($pair);
+                    return;
+                }
+                $now = microtime(true);
+                $pair->recordResponse($now - $start, $now);
+                $self->handleCheckBinding($address, $pair, $nominate);
             } catch (TransactionExceptionInterface $e) {
-                $this->handleBindingError($e, $pair, $message);
+                $weak->get()?->handleBindingError($e, $pair, $message);
             } catch (Throwable $e) {
                 // Anything else is a bug rather than a statement about this pair, but the
                 // check list is driven by pairs reaching a terminal state: letting the fiber
                 // die here would leave isBindingWait set and stall the whole exchange.
-                $this->logger?->error("Check $pair aborted: {$e->getMessage()}");
-                $this->markPairFailed($pair);
+                $self = $weak->get();
+                $self?->logger?->error("Check $pair aborted: {$e->getMessage()}");
+                $self?->markPairFailed($pair);
             }
         })->ignore();
     }
@@ -1647,7 +1720,13 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     private function handleSuccessfulPair(RTCIceCandidatePair $pair): bool
     {
         if ($pair->isNominated()) {
-            $this->nominated[$pair->getComponentId()] = $pair;
+            // Checks run in parallel, so several pairs can be nominated: the highest-priority one is
+            // used, rather than whichever was nominated last (RFC 8445, section 8.1.1). Once the
+            // keepalives changed the pair, they choose it instead (see periodicConsentCheck()).
+            $current = $this->nominated[$pair->getComponentId()] ?? null;
+            if ($current === null || (!$this->keepaliveSwitched && $this->getPairPriority($pair) > $this->getPairPriority($current))) {
+                $this->nominated[$pair->getComponentId()] = $pair;
+            }
             $this->failOtherPairsInComponent($pair);
         }
 
@@ -1768,11 +1847,13 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     }
 
     /**
-     * Periodically performs consent freshness checks as per RFC 7675.
+     * Keeps the connection alive once established, switching to another path when needed.
      *
-     * Sends periodic STUN binding requests on all nominated candidate pairs to confirm
-     * that the remote peer still consents to receive traffic. If repeated failures occur,
-     * the connection is closed.
+     * STUN binding requests are sent periodically on the selected pair of each component, and less
+     * often on the other valid pairs (the backups), keeping their NAT bindings open and measuring
+     * their round-trip times. If the selected pair stops answering, the best backup that still
+     * answers is selected; a backup that is clearly faster is also selected, with hysteresis.
+     * Consent to send (RFC 7675) only expires once no pair of a component answered for 30 seconds.
      *
      * @see https://www.rfc-editor.org/rfc/rfc7675
      *
@@ -1781,15 +1862,23 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     #[Override]
     public function periodicConsentCheck(): void
     {
-        $interval = $this->calculateConsentInterval();
-        $this->consentFailureCount = 0;
+        $now = microtime(true);
+        $this->lastSwitchAt = $now;
+        foreach ($this->checkList as $pair) {
+            if ($pair->getState() === RTCIceCandidatePairStats::SUCCEEDED) {
+                $pair->touch($now);
+            }
+        }
+        foreach ($this->nominated as $pair) {
+            $pair->touch($now);
+        }
 
         // A repeat watcher registered as $this->onConsentTimer(...) captures $this strongly and
         // would keep the event loop holding this whole ICE connection alive forever, so an
         // unset()+gc_collect_cycles() could never reclaim it. Hold only a weak reference and let
         // the tick cancel itself once the owner has been collected.
         $weak = \WeakReference::create($this);
-        $this->queryConsentTimer = EventLoop::repeat($interval, static function (string $id) use ($weak): void {
+        $this->queryConsentTimer = EventLoop::repeat(self::KEEPALIVE_TICK * $this->timeScale, static function (string $id) use ($weak): void {
             $self = $weak->get();
             if ($self === null) {
                 EventLoop::cancel($id);
@@ -1801,17 +1890,21 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     }
 
     /**
-     * Calculates a randomized interval for consent freshness checks.
+     * Multiplies the intervals and timeouts of the keepalives, to test them quickly.
      *
-     * This interval is based on a multiplier of a fixed base interval,
-     * randomized within a range as defined in RFC 7675, section 5.1.
-     *
-     * @return float The randomized interval in seconds.
+     * @internal
      */
-    private function calculateConsentInterval(): float
+    public function setTimeScale(float $timeScale): void
     {
-        // See https://www.rfc-editor.org/rfc/rfc7675#section-5.1
-        return (float)self::CONSENT_INTERVAL * (0.8 + 0.4 * (float)mt_rand() / (float)mt_getrandmax());
+        $this->timeScale = $timeScale;
+    }
+
+    /**
+     * Randomizes the interval between two checks of a pair, as RFC 7675 (section 5.1) requires.
+     */
+    private static function randomizeInterval(float $interval): float
+    {
+        return $interval * (0.8 + 0.4 * (float)mt_rand() / (float)mt_getrandmax());
     }
 
     /**
@@ -1828,6 +1921,8 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     #[Override]
     public function close(): void
     {
+        // The sockets closed here are not given up one by one (see onClose()).
+        $this->closing = true;
         $this->stopPeriodicConsentCheck();
         $this->markCheckListAsFailed();
         $this->clearResources();
@@ -1910,11 +2005,16 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     #[Override]
     public function sendData(string $data, int $componentId = 1): void
     {
-        if (isset($this->nominated[$componentId])) {
-            $pair = $this->nominated[$componentId];
-            $pair->getProtocol()->send($data, $pair->getRemoteAddress());
-        } else {
+        if (!isset($this->nominated[$componentId])) {
             throw new RuntimeException("No Connection");
+        }
+        $pair = $this->nominated[$componentId];
+        try {
+            $pair->getProtocol()->send($data, $pair->getRemoteAddress());
+        } catch (Throwable $e) {
+            // Like any datagram that doesn't make it, it's lost: the keepalives notice that the path is
+            // down, and switch to another one. Throwing would make the senders give up on the connection.
+            $this->logger?->debug("Could not send on $pair: {$e->getMessage()}");
         }
     }
 
@@ -1954,6 +2054,9 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     #[Override]
     public function onRequestReceived(MessageInterface $message, InternetAddress $address, IceConnectionProtocolInterface $protocol, string $data): void
     {
+        // A request relayed by TURN comes from the connection of the allocation: the pairs use the protocol that
+        // wraps it, which relays the data too.
+        $protocol = $this->protocols[$protocol->getId()] ?? $protocol;
         if (!$this->isBindingRequest($message) || !$this->authenticateRequest($message, $data)) {
             $this->respondError($message, $address, $protocol, [400, "Bad Request"]);
 
@@ -2081,17 +2184,8 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $responseMessage->setTransactionId($message->getTransactionId());
         $responseMessage->addMessageIntegrity($this->localPassword);
 
-        async(function () use ($protocol, $responseMessage, $address) {
-            try {
-                $response = $protocol->request($responseMessage, $address, null);
-                $this->logger?->info("Binding response sent successfully", [
-                    "Message" => $response[0]->humanReadable(),
-                    "Address" => $response[1]
-                ]);
-            } catch (TransactionExceptionInterface $e) {
-                $this->logger?->error("Failed to send binding response", ["Error" => $e->getMessage()]);
-            }
-        })->ignore();
+        // A response is not a transaction: nothing answers it, so it's just sent (like error responses).
+        $protocol->sendMessage($responseMessage, $address);
     }
 
     /**
@@ -2140,14 +2234,59 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     }
 
     /**
-     * Emits the 'onClose' event to signal ICE connection closure.
+     * Called when the socket of a protocol closed.
+     *
+     * Only the pairs using it are given up, switching to a backup if a selected pair used it: the
+     * connection is only closed once none of its sockets is left.
+     *
+     * @param IceConnectionProtocolInterface|null $protocol The protocol whose socket closed.
      *
      * @return void
      */
     #[Override]
-    public function onClose(): void
+    public function onClose(?IceConnectionProtocolInterface $protocol = null): void
     {
-        $this->notifyClosed();
+        if ($this->closed || $this->closing) {
+            return;
+        }
+        if ($protocol === null) {
+            $this->notifyClosed();
+            return;
+        }
+        $id = $protocol->getId();
+        if (!isset($this->protocols[$id])) {
+            return;
+        }
+        unset($this->protocols[$id]);
+        foreach ($this->checkList as $pair) {
+            if ($pair->getProtocol()->getId() === $id && $pair->getState() !== RTCIceCandidatePairStats::FAILED) {
+                $this->changeCandidatePairState($pair, RTCIceCandidatePairStats::FAILED);
+            }
+        }
+        if ($this->protocols === []) {
+            $this->logger?->info("All the sockets of the ICE connection closed");
+            $this->notifyClosed();
+            return;
+        }
+
+        $now = microtime(true);
+        foreach ($this->nominated as $componentId => $selected) {
+            if ($selected->getProtocol()->getId() !== $id) {
+                continue;
+            }
+            $backups = array_values(array_filter(
+                $this->getValidPairs($componentId),
+                fn (RTCIceCandidatePair $pair): bool => $pair !== $selected && $pair->respondedWithin(self::BACKUP_ALIVE_TIMEOUT * $this->timeScale, $now)
+            ));
+            // A backup that did not answer recently may still work: a closed socket certainly doesn't.
+            $best = $this->getCheapestPair($backups, 0) ?? $this->getCheapestPair(array_values(array_filter(
+                $this->getValidPairs($componentId),
+                static fn (RTCIceCandidatePair $pair): bool => $pair !== $selected && $pair->getState() === RTCIceCandidatePairStats::SUCCEEDED
+            )), 0);
+            if ($best !== null) {
+                $this->switchPair($componentId, $best, $now, "the socket of the selected pair closed");
+            }
+        }
     }
 
     /**
@@ -2358,36 +2497,213 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
      */
     private function onConsentTimer(): void
     {
-        $weak = \WeakReference::create($this);
-        foreach ($this->nominated as $pair) {
-            $message = $this->buildBindingMessage($pair, false);
-            $remoteAddress = $pair->getRemoteAddress();
-
-            // Weak self-reference so an in-flight consent check (which awaits a STUN transaction)
-            // does not pin this connection past an unset(); if it was collected mid-flight, the
-            // check simply stops.
-            async(static function () use ($weak, $pair, $message, $remoteAddress): void {
-                try {
-                    $self = $weak->get();
-                    if ($self === null) {
-                        return;
+        $now = microtime(true);
+        foreach ($this->nominated as $componentId => $selected) {
+            foreach ($this->getValidPairs($componentId) as $pair) {
+                $interval = ($pair === $selected ? self::KEEPALIVE_INTERVAL : self::BACKUP_INTERVAL) * $this->timeScale;
+                $lastPingAt = $pair->getLastPingAt();
+                if (!$pair->isPinging() && ($lastPingAt === null || $now - $lastPingAt >= self::randomizeInterval($interval))) {
+                    $this->ping($pair);
+                }
+            }
+            // The pairs that were not checked when ICE completed (they were cut off by the nomination,
+            // or formed afterwards with candidates trickled late) are checked once, one at a time, to
+            // find more backups.
+            if ($this->lastDiscoveryAt === null || $now - $this->lastDiscoveryAt >= self::KEEPALIVE_INTERVAL * $this->timeScale) {
+                $discovering = false;
+                $next = null;
+                foreach ($this->checkList as $pair) {
+                    if ($pair->getComponentId() !== $componentId
+                        || $pair->getLastResponseAt() !== null
+                        || \in_array($pair->getState(), [RTCIceCandidatePairStats::IN_PROGRESS, RTCIceCandidatePairStats::SUCCEEDED], true)
+                    ) {
+                        continue;
                     }
-                    $pair->getProtocol()->request($message, $remoteAddress, $self->remotePassword);
-                    $self->consentFailureCount = 0;
-                } catch (Throwable $e) {
-                    $self = $weak->get();
-                    if ($self === null) {
-                        return;
+                    if ($pair->isPinging()) {
+                        $discovering = true;
+                        break;
                     }
-                    $self->consentFailureCount++;
-                    $self->logger?->warning("Consent check failed for pair: $pair. Error: {$e->getMessage()}");
-                    if ($self->consentFailureCount >= self::CONSENT_FAILURES) {
-                        $self->logger?->error("Consent to send expired after {$self->consentFailureCount} failures");
-                        $self->close();
+                    if ($pair->getLastPingAt() === null) {
+                        $next ??= $pair;
                     }
                 }
-            })->ignore();
+                if (!$discovering && $next !== null) {
+                    $this->lastDiscoveryAt = $now;
+                    $this->ping($next);
+                }
+            }
+            $this->selectPair($componentId, $now);
+            if ($this->closed) {
+                return;
+            }
         }
+    }
+
+    /**
+     * Gets the pairs of a component that were validated by a connectivity check: the selected one and its backups.
+     *
+     * Backups that did not answer for the whole consent timeout are given up.
+     *
+     * @return list<RTCIceCandidatePair>
+     */
+    private function getValidPairs(int $componentId): array
+    {
+        $now = microtime(true);
+        $selected = $this->nominated[$componentId] ?? null;
+        $valid = [];
+        foreach ($this->checkList as $pair) {
+            if ($pair->getComponentId() !== $componentId || $pair->getState() !== RTCIceCandidatePairStats::SUCCEEDED) {
+                continue;
+            }
+            if ($pair !== $selected && !$pair->respondedWithin(self::CONSENT_TIMEOUT * $this->timeScale, $now)) {
+                $this->logger?->debug(sprintf("Giving up backup pair %s: it did not answer for %.1f seconds", $pair, self::CONSENT_TIMEOUT * $this->timeScale));
+                $this->changeCandidatePairState($pair, RTCIceCandidatePairStats::FAILED);
+                continue;
+            }
+            $valid[] = $pair;
+        }
+        if ($selected !== null && !in_array($selected, $valid, true)) {
+            $valid[] = $selected;
+        }
+        return $valid;
+    }
+
+    /**
+     * Sends a keepalive binding request on a pair, measuring its round-trip time.
+     */
+    private function ping(RTCIceCandidatePair $pair): void
+    {
+        $pair->setPinging(true, microtime(true));
+        $message = $this->buildBindingMessage($pair, false);
+        $remoteAddress = $pair->getRemoteAddress();
+        $password = $this->remotePassword;
+        $retransmissions = \in_array($pair, $this->nominated, true) ? self::KEEPALIVE_RETRANSMISSIONS : self::BACKUP_RETRANSMISSIONS;
+
+        // Weak self-reference so an in-flight check (which awaits a STUN transaction) does not pin
+        // this connection past an unset(); if it was collected mid-flight, the check simply stops.
+        $weak = \WeakReference::create($this);
+        async(static function () use ($weak, $pair, $message, $remoteAddress, $password, $retransmissions): void {
+            $start = microtime(true);
+            try {
+                $pair->getProtocol()->request($message, $remoteAddress, $password, $retransmissions);
+                $now = microtime(true);
+                $pair->recordResponse($now - $start, $now);
+                $self = $weak->get();
+                if ($self !== null && !$self->closed && $pair->getState() !== RTCIceCandidatePairStats::SUCCEEDED) {
+                    // A pair that was not checked when ICE completed: now a backup.
+                    $self->changeCandidatePairState($pair, RTCIceCandidatePairStats::SUCCEEDED);
+                }
+            } catch (Throwable $e) {
+                $weak->get()?->logger?->debug("Keepalive check failed for pair: $pair. Error: {$e->getMessage()}");
+            } finally {
+                $pair->setPinging(false, microtime(true));
+            }
+            $self = $weak->get();
+            if ($self !== null && !$self->closed) {
+                $self->selectPair($pair->getComponentId(), microtime(true));
+            }
+        })->ignore();
+    }
+
+    /**
+     * Selects the pair a component sends on: a backup if the selected pair stopped answering, or if a
+     * backup is clearly faster.
+     */
+    private function selectPair(int $componentId, float $now): void
+    {
+        $selected = $this->nominated[$componentId] ?? null;
+        if ($selected === null || $this->closed) {
+            return;
+        }
+        $backups = array_values(array_filter(
+            $this->getValidPairs($componentId),
+            fn (RTCIceCandidatePair $pair): bool => $pair !== $selected && $pair->respondedWithin(self::BACKUP_ALIVE_TIMEOUT * $this->timeScale, $now)
+        ));
+
+        if (!$selected->respondedWithin(self::UNWRITABLE_TIMEOUT * $this->timeScale, $now)) {
+            $best = $this->getCheapestPair($backups, 0);
+            if ($best !== null) {
+                $this->switchPair($componentId, $best, $now, "the selected pair stopped answering");
+            } elseif (!$selected->respondedWithin(self::CONSENT_TIMEOUT * $this->timeScale, $now)) {
+                $this->logger?->error(sprintf("Consent to send expired: no pair answered for %.1f seconds", self::CONSENT_TIMEOUT * $this->timeScale));
+                $this->close();
+            }
+            return;
+        }
+
+        if ($this->lastSwitchAt !== null && $now - $this->lastSwitchAt < self::MIN_SWITCH_INTERVAL * $this->timeScale) {
+            return;
+        }
+        $selectedCost = $this->getPairCost($selected);
+        $best = $this->getCheapestPair($backups, self::MIN_RTT_SAMPLES);
+        $bestCost = $best !== null ? $this->getPairCost($best) : null;
+        if ($best !== null && $selectedCost !== null && $bestCost !== null
+            && $bestCost < $selectedCost * self::SWITCH_IMPROVEMENT
+            && $selectedCost - $bestCost >= self::MIN_SWITCH_GAIN
+        ) {
+            $this->switchPair($componentId, $best, $now, "it has a lower latency");
+        }
+    }
+
+    /**
+     * Gets the pair with the lowest cost, among the ones with enough round-trip time samples.
+     *
+     * @param list<RTCIceCandidatePair> $pairs
+     */
+    private function getCheapestPair(array $pairs, int $minSamples): ?RTCIceCandidatePair
+    {
+        $pairs = array_values(array_filter($pairs, static fn (RTCIceCandidatePair $pair): bool => $pair->getRttSamples() >= $minSamples));
+        // The pairs without a measured round-trip time rank by their priority, after the measured ones.
+        usort($pairs, function (RTCIceCandidatePair $a, RTCIceCandidatePair $b): int {
+            $costA = $this->getPairCost($a);
+            $costB = $this->getPairCost($b);
+            if ($costA !== null && $costB !== null) {
+                return $costA <=> $costB;
+            }
+            if ($costA !== null || $costB !== null) {
+                return $costA !== null ? -1 : 1;
+            }
+            return $this->getPairPriority($b) <=> $this->getPairPriority($a);
+        });
+        return $pairs[0] ?? null;
+    }
+
+    /**
+     * Gets the cost of sending on a pair: its round-trip time, higher for relayed pairs.
+     */
+    private function getPairCost(RTCIceCandidatePair $pair): ?float
+    {
+        $rtt = $pair->getRtt();
+        if ($rtt === null) {
+            return null;
+        }
+        $relayed = $pair->getLocalCandidate()->getType() === CandidateType::relay
+            || $pair->getRemoteCandidate()->getType() === CandidateType::relay;
+        return $rtt + ($relayed ? self::RELAY_PENALTY : 0.0);
+    }
+
+    /**
+     * Changes the pair a component sends on.
+     */
+    private function switchPair(int $componentId, RTCIceCandidatePair $pair, float $now, string $reason): void
+    {
+        $previous = $this->nominated[$componentId];
+        $this->nominated[$componentId] = $pair;
+        $this->lastSwitchAt = $now;
+        $this->keepaliveSwitched = true;
+        $this->logger?->info(sprintf(
+            "Switching from %s (round-trip time %s) to %s (round-trip time %s): %s",
+            $previous,
+            self::formatRtt($previous->getRtt()),
+            $pair,
+            self::formatRtt($pair->getRtt()),
+            $reason
+        ));
+    }
+
+    private static function formatRtt(?float $rtt): string
+    {
+        return $rtt === null ? "unknown" : sprintf("%.1fms", $rtt * 1000.0);
     }
 
     /**
@@ -2437,6 +2753,14 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $this->closedListeners = SerializableState::listToWeakMap($closedListeners);
         $this->bindingCheck = null;
         $this->queryConsentTimer = null;
+        // The timestamps of another process mean nothing, and the requests it was waiting for won't be answered here.
+        $now = microtime(true);
+        foreach ($this->checkList as $pair) {
+            $pair->resetLiveness($now);
+        }
+        foreach ($this->nominated as $pair) {
+            $pair->resetLiveness($now);
+        }
         if ($restartConsent && $this->nominated !== []) {
             $this->periodicConsentCheck();
         }

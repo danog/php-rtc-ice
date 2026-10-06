@@ -173,6 +173,46 @@ class RTCIceConnectionTest extends TestCase
         $this->assertTrue($connection->isClosed());
     }
 
+    public function testStateSavedByAnOlderVersionCanBeRestored()
+    {
+        // Saved by a version that still had $consentFailureCount, since removed.
+        $state = (new RTCIceConnection($this->config, IceRole::Controlling))->__serialize();
+        $state[RTCIceConnection::class . "\0consentFailureCount"] = 3;
+
+        $restored = (new \ReflectionClass(RTCIceConnection::class))->newInstanceWithoutConstructor();
+        $restored->__unserialize($state);
+        $this->assertFalse($restored->isClosed());
+    }
+
+    public function testTheHighestPriorityNominatedPairIsUsed()
+    {
+        $connection = new RTCIceConnection($this->config, IceRole::Controlling);
+        $makePair = function (int $localPriority, int $remotePriority): RTCIceCandidatePair {
+            $local = new RTCIceCandidate(1);
+            $local->setPriority($localPriority);
+            $protocol = Mockery::mock(IceConnectionProtocolInterface::class);
+            $protocol->allows('getCandidate')->andReturn($local);
+            $protocol->allows('getId')->andReturn(uniqid());
+            $remote = new RTCIceCandidate(1);
+            $remote->setPriority($remotePriority);
+            $pair = new RTCIceCandidatePair($protocol, $remote);
+            $pair->setNominated(true);
+            $pair->setState(RTCIceCandidatePairStats::SUCCEEDED);
+            return $pair;
+        };
+        // A host pair, and a pair with a relayed local candidate.
+        $high = $makePair(2130706431, 2130706431);
+        $low = $makePair(16777215, 2130706431);
+
+        // Checks run in parallel: the lower-priority pair can be nominated last.
+        $handle = new ReflectionMethod(RTCIceConnection::class, 'handleSuccessfulPair');
+        $handle->invoke($connection, $high);
+        $handle->invoke($connection, $low);
+
+        $nominated = (new \ReflectionProperty(RTCIceConnection::class, 'nominated'))->getValue($connection);
+        $this->assertSame($high, $nominated[1]);
+    }
+
     public function testConnect()
     {
         $connection1 = $this->getIceConnection();
@@ -956,106 +996,277 @@ class RTCIceConnectionTest extends TestCase
         $connection2->close();
     }
 
-    #[AllowMockObjectsWithoutExpectations]
-    public function testConsentExpired()
+    /**
+     * Connect two agents whose keepalives run ten times faster than usual.
+     *
+     * @return array{RTCIceConnection, RTCIceConnection}
+     */
+    private function connectFast(): array
     {
-        $connection1 = $this->getMockBuilder(RTCIceConnection::class)
-            ->setConstructorArgs([$this->config, IceRole::Controlling])
-            ->onlyMethods(['periodicConsentCheck'])
-            ->getMock();
-        self::pinLoopbackOnWindows($connection1);
-
-        $periodicConsentCheckMock = function () use ($connection1) {
-            $failureCount = 0;
-
-            $queryConsentTimer = \Revolt\EventLoop::repeat(1, function () use (&$failureCount, $connection1): void {
-                foreach ($connection1->getNominated() as $pair) {
-                    $message = $connection1->buildBindingMessage($pair, false);
-                    $remoteAddress = $pair->getRemoteAddress();
-
-                    // Mirrors periodicConsentCheck(): the request blocks, so it runs in its
-                    // own fiber and the timer callback stays free to fire again.
-                    async(function () use ($pair, $message, $remoteAddress, $connection1, &$failureCount): void {
-                        try {
-                            $pair->getProtocol()->request($message, $remoteAddress, $connection1->getRemotePassword());
-                            $failureCount = 0; // Reset failures on success
-                        } catch (\Throwable) {
-                            $failureCount++;
-                            if ($failureCount >= 1) {
-                                $connection1->close();
-                            }
-                        }
-                    })->ignore();
-
-                }
-            });
-            $connection1->setQueryConsentTimer($queryConsentTimer);
-        };
-        $connection1->method('periodicConsentCheck')->willReturnCallback($periodicConsentCheckMock);
-
+        $connection1 = $this->getIceConnection();
         $connection2 = $this->getIceConnection(false);
-
+        $connection1->setTimeScale(0.1);
+        $connection2->setTimeScale(0.1);
         $this->inviteAccept($connection1, $connection2);
-
         $this->asyncConnect($connection1, $connection2);
-        $this->assertCount(1, $connection1->getNominated());
-
-        $connection2->close();
-        delay(2);
-        $this->assertCount(0, $connection1->getNominated());
-
-        $connection1->close();
+        return [$connection1, $connection2];
     }
 
-    #[AllowMockObjectsWithoutExpectations]
-    public function testConsentValid()
+    /**
+     * @return list<RTCIceCandidatePair>
+     */
+    private static function validPairs(RTCIceConnection $connection): array
     {
-        $connection1 = $this->getMockBuilder(RTCIceConnection::class)
-            ->setConstructorArgs([$this->config, IceRole::Controlling])
-            ->onlyMethods(['periodicConsentCheck'])
-            ->getMock();
-        self::pinLoopbackOnWindows($connection1);
+        return (new ReflectionMethod(RTCIceConnection::class, 'getValidPairs'))->invoke($connection, 1);
+    }
 
-        $periodicConsentCheckMock = function () use ($connection1) {
-            $failureCount = 0;
+    /**
+     * Send data until it's received, as the receiving side may still be switching paths.
+     */
+    private function sendUntilReceived(RTCIceConnection $from, array &$data, string $payload, float $timeout = 5.0): void
+    {
+        $deadline = microtime(true) + $timeout;
+        while ($data === [] && microtime(true) < $deadline) {
+            $from->sendData($payload);
+            delay(0.1);
+        }
+        $this->assertNotEmpty($data, 'The data was not received');
+        $this->assertSame($payload, $data[0][0]);
+    }
 
-            $queryConsentTimer = \Revolt\EventLoop::repeat(1, function () use (&$failureCount, $connection1): void {
-                foreach ($connection1->getNominated() as $pair) {
-                    $message = $connection1->buildBindingMessage($pair, false);
-                    $remoteAddress = $pair->getRemoteAddress();
-
-                    // Mirrors periodicConsentCheck(): the request blocks, so it runs in its
-                    // own fiber and the timer callback stays free to fire again.
-                    async(function () use ($pair, $message, $remoteAddress, $connection1, &$failureCount): void {
-                        try {
-                            $pair->getProtocol()->request($message, $remoteAddress, $connection1->getRemotePassword());
-                            $failureCount = 0; // Reset failures on success
-                        } catch (\Throwable) {
-                            $failureCount++;
-                            if ($failureCount >= 1) {
-                                $connection1->close();
-                            }
-                        }
-                    })->ignore();
-
-                }
-            });
-            $connection1->setQueryConsentTimer($queryConsentTimer);
-        };
-        $connection1->method('periodicConsentCheck')->willReturnCallback($periodicConsentCheckMock);
-
-        $connection2 = $this->getIceConnection(false);
-
-        $this->inviteAccept($connection1, $connection2);
-
-        $this->asyncConnect($connection1, $connection2);
+    public function testConsentExpiresWhenNoPathAnswers()
+    {
+        [$connection1, $connection2] = $this->connectFast();
         $this->assertCount(1, $connection1->getNominated());
 
-        delay(2);
+        $connection2->close();
+        // Not right away: only once no pair answered for the whole consent timeout (3 seconds here).
+        delay(1);
+        $this->assertFalse($connection1->isClosed());
+        $deadline = microtime(true) + 8;
+        while (!$connection1->isClosed() && microtime(true) < $deadline) {
+            delay(0.1);
+        }
+        $this->assertTrue($connection1->isClosed(), 'Consent did not expire');
+    }
+
+    public function testConsentStaysValid()
+    {
+        [$connection1, $connection2] = $this->connectFast();
+
+        // Longer than the consent timeout (3 seconds here): the keepalives keep the connection up.
+        delay(5);
+        $this->assertFalse($connection1->isClosed());
+        $this->assertFalse($connection2->isClosed());
         $this->assertCount(1, $connection1->getNominated());
+
+        $data = [];
+        $this->getData($connection2, $data);
+        $this->sendUntilReceived($connection1, $data, 'Hello');
 
         $connection1->close();
         $connection2->close();
+    }
+
+    public function testCandidatesTrickledAfterCompletionBecomeBackups()
+    {
+        $connection1 = $this->getIceConnection();
+        $connection2 = $this->getIceConnection(false);
+        $connection1->setTimeScale(0.1);
+        $connection2->setTimeScale(0.1);
+
+        $connection1->gatherCandidates();
+        foreach ($connection1->getLocalCandidates() as $candidate) {
+            $connection2->addRemoteCandidate($candidate);
+        }
+        $connection2->endOfRemoteCandidate();
+        $connection2->setRemoteUsername($connection1->getLocalUsername());
+        $connection2->setRemotePassword($connection1->getLocalPassword());
+        // The first agent connects with one candidate of the other: the others arrive once ICE completed.
+        $connection2->gatherCandidates();
+        $late = $connection2->getLocalCandidates();
+        $first = array_shift($late);
+        if ($late === []) {
+            $connection1->close();
+            $connection2->close();
+            $this->markTestSkipped('Needs at least two network paths between the agents');
+        }
+        $connection1->addRemoteCandidate($first);
+        $connection1->setRemoteUsername($connection2->getLocalUsername());
+        $connection1->setRemotePassword($connection2->getLocalPassword());
+        $this->asyncConnect($connection1, $connection2);
+        foreach ($late as $candidate) {
+            $connection1->addRemoteCandidate($candidate);
+        }
+
+        $deadline = microtime(true) + 10;
+        $lateBackup = static fn (): bool => array_filter(
+            self::validPairs($connection1),
+            static fn (RTCIceCandidatePair $pair): bool => \in_array($pair->getRemoteCandidate(), $late, true)
+        ) !== [];
+        while (!$lateBackup() && microtime(true) < $deadline) {
+            delay(0.1);
+        }
+        $this->assertTrue($lateBackup(), 'No pair with a candidate trickled after completion was checked');
+
+        $connection1->close();
+        $connection2->close();
+    }
+
+    public function testFailoverWhenTheSelectedPathStops()
+    {
+        [$connection1, $connection2] = $this->connectFast();
+
+        // The keepalives validate the pairs that were not checked when ICE completed: they're the backups.
+        $deadline = microtime(true) + 5;
+        while ((\count(self::validPairs($connection1)) < 2 || \count(self::validPairs($connection2)) < 2) && microtime(true) < $deadline) {
+            delay(0.1);
+        }
+        if (\count(self::validPairs($connection1)) < 2 || \count(self::validPairs($connection2)) < 2) {
+            $connection1->close();
+            $connection2->close();
+            $this->markTestSkipped('Needs at least two network paths between the agents');
+        }
+
+        $selected = $connection1->getNominated()[1];
+        // As if the network interface of the selected pair went down.
+        $selected->getProtocol()->close();
+
+        $deadline = microtime(true) + 5;
+        while ($connection1->getNominated()[1] === $selected && microtime(true) < $deadline) {
+            delay(0.1);
+        }
+        $this->assertNotSame($selected, $connection1->getNominated()[1], 'No switch to a backup');
+        $this->assertFalse($connection1->isClosed());
+        $this->assertFalse($connection2->isClosed());
+
+        $data1 = [];
+        $data2 = [];
+        $this->getData($connection1, $data1);
+        $this->getData($connection2, $data2);
+        $this->sendUntilReceived($connection1, $data2, 'Hello');
+        $this->sendUntilReceived($connection2, $data1, 'Bye');
+
+        $connection1->close();
+        $connection2->close();
+    }
+
+    /**
+     * A pair on a mock protocol, validated by a check.
+     *
+     * @param list<float> $rtts Round-trip times measured on the pair.
+     */
+    private function validPair(array $rtts, CandidateType $type = CandidateType::host, int $priority = 2130706431, ?float $lastResponseAt = null): RTCIceCandidatePair
+    {
+        $local = new RTCIceCandidate(1);
+        $local->setType($type);
+        $local->setPriority($priority);
+        $protocol = Mockery::mock(IceConnectionProtocolInterface::class);
+        $protocol->allows('getCandidate')->andReturn($local);
+        $protocol->allows('getId')->andReturn(uniqid());
+        $remote = new RTCIceCandidate(1);
+        $remote->setType(CandidateType::host);
+        $remote->setPriority(2130706431);
+        $pair = new RTCIceCandidatePair($protocol, $remote);
+        $pair->setState(RTCIceCandidatePairStats::SUCCEEDED);
+        $now = microtime(true);
+        foreach ($rtts as $rtt) {
+            $pair->recordResponse($rtt, $lastResponseAt ?? $now);
+        }
+        return $pair;
+    }
+
+    /**
+     * Run the pair selection of a connection whose selected pair and backups are the specified ones.
+     *
+     * @param list<RTCIceCandidatePair> $backups
+     */
+    private function select(RTCIceCandidatePair $selected, array $backups, ?float $lastSwitchAt = null): RTCIceCandidatePair
+    {
+        $connection = new RTCIceConnection($this->config, IceRole::Controlling);
+        (new \ReflectionProperty(RTCIceConnection::class, 'checkList'))->setValue($connection, [$selected, ...$backups]);
+        (new \ReflectionProperty(RTCIceConnection::class, 'nominated'))->setValue($connection, [1 => $selected]);
+        (new \ReflectionProperty(RTCIceConnection::class, 'lastSwitchAt'))->setValue($connection, $lastSwitchAt);
+        (new ReflectionMethod(RTCIceConnection::class, 'selectPair'))->invoke($connection, 1, microtime(true));
+        return $connection->getNominated()[1];
+    }
+
+    public function testSwitchesToAMuchFasterPair()
+    {
+        $selected = $this->validPair([0.100, 0.100, 0.100]);
+        $faster = $this->validPair([0.040, 0.040, 0.040]);
+        $this->assertSame($faster, $this->select($selected, [$faster]));
+    }
+
+    public function testDoesNotSwitchForASmallGain()
+    {
+        $selected = $this->validPair([0.100, 0.100, 0.100]);
+        $slightlyFaster = $this->validPair([0.080, 0.080, 0.080]);
+        $this->assertSame($selected, $this->select($selected, [$slightlyFaster]));
+    }
+
+    public function testDoesNotSwitchBetweenFastPaths()
+    {
+        // Half the latency, but 1ms faster.
+        $selected = $this->validPair([0.002, 0.002, 0.002]);
+        $faster = $this->validPair([0.001, 0.001, 0.001]);
+        $this->assertSame($selected, $this->select($selected, [$faster]));
+    }
+
+    public function testDoesNotSwitchWithoutEnoughMeasurements()
+    {
+        $selected = $this->validPair([0.100, 0.100, 0.100]);
+        $faster = $this->validPair([0.010]);
+        $this->assertSame($selected, $this->select($selected, [$faster]));
+    }
+
+    public function testARelayedPairNeedsAMuchLowerLatency()
+    {
+        $selected = $this->validPair([0.080, 0.080, 0.080]);
+        // 40ms faster, but relayed.
+        $relayed = $this->validPair([0.040, 0.040, 0.040], CandidateType::relay, 16777215);
+        $this->assertSame($selected, $this->select($selected, [$relayed]));
+    }
+
+    public function testSwitchesAreRateLimited()
+    {
+        $selected = $this->validPair([0.100, 0.100, 0.100]);
+        $faster = $this->validPair([0.040, 0.040, 0.040]);
+        $this->assertSame($selected, $this->select($selected, [$faster], microtime(true) - 1));
+        $this->assertSame($faster, $this->select($selected, [$faster], microtime(true) - 11));
+    }
+
+    public function testFailoverPicksTheFastestLiveBackup()
+    {
+        // The selected pair stopped answering 4 seconds ago; switching for a failure is not rate-limited.
+        $selected = $this->validPair([0.020], lastResponseAt: microtime(true) - 4);
+        $slow = $this->validPair([0.200]);
+        $fast = $this->validPair([0.050]);
+        $dead = $this->validPair([0.010], lastResponseAt: microtime(true) - 20);
+        $this->assertSame($fast, $this->select($selected, [$slow, $fast, $dead], microtime(true)));
+    }
+
+    public function testNoFailoverWithoutALiveBackup()
+    {
+        $selected = $this->validPair([0.020], lastResponseAt: microtime(true) - 4);
+        $dead = $this->validPair([0.010], lastResponseAt: microtime(true) - 20);
+        $this->assertSame($selected, $this->select($selected, [$dead]));
+    }
+
+    public function testASendThatFailsIsDropped()
+    {
+        // The socket of the selected pair is gone, which wasn't noticed yet.
+        $selected = $this->validPair([0.020]);
+        $selected->getRemoteCandidate()->setHost('127.0.0.1');
+        $selected->getRemoteCandidate()->setPort(9);
+        $selected->getProtocol()->expects('send')->andThrow(new \Amp\Socket\SocketException('The datagram socket is not writable'));
+        $connection = new RTCIceConnection($this->config, IceRole::Controlling);
+        (new \ReflectionProperty(RTCIceConnection::class, 'checkList'))->setValue($connection, [$selected]);
+        (new \ReflectionProperty(RTCIceConnection::class, 'nominated'))->setValue($connection, [1 => $selected]);
+
+        // Like any datagram that is lost: the senders keep going, and the keepalives find another path.
+        $connection->sendData('media');
+        $this->assertSame($selected, $connection->getNominated()[1]);
     }
 
     //FIXME
@@ -1193,6 +1404,40 @@ class RTCIceConnectionTest extends TestCase
         $connection2->close();
     }
 
+    public function testEveryValidPairOfARelayedAgentCarriesData()
+    {
+        $this->requireLocalTurnServer();
+
+        $config = clone $this->config;
+        $config->setTurnServer([self::localServerHost(), 3478]);
+        $config->setTurnUsername('quasarstream');
+        $config->setTurnPassword('123');
+        $connection1 = $this->iceConnection($config);
+        $connection1->setTransportPolicy(TransportPolicyType::RELAY);
+        $connection2 = $this->getIceConnection(false);
+        $connection1->setTimeScale(0.1);
+        $connection2->setTimeScale(0.1);
+        $this->inviteAccept($connection1, $connection2);
+        $this->asyncConnect($connection1, $connection2);
+        // The keepalives check the pairs that were not checked yet.
+        delay(2);
+
+        $data1 = [];
+        $this->getData($connection1, $data1);
+        $valid = self::validPairs($connection2);
+        $this->assertNotEmpty($valid);
+        // The checks of a relayed candidate are relayed too: a pair to the socket of the allocation, which the data
+        // never comes from, would look valid but drop everything sent on it.
+        foreach ($valid as $pair) {
+            (new \ReflectionProperty(RTCIceConnection::class, 'nominated'))->setValue($connection2, [1 => $pair]);
+            $data1 = [];
+            $this->sendUntilReceived($connection2, $data1, "Hello via $pair", 2);
+        }
+
+        $connection1->close();
+        $connection2->close();
+    }
+
     public function testGatherCandidatesRelayOnlyWithTurnServer()
     {
         $this->requireLocalTurnServer();
@@ -1263,6 +1508,7 @@ class RTCIceConnectionTest extends TestCase
 
         $messages = [];
         $protocolMock = Mockery::mock(StunInterface::class);
+        $protocolMock->allows('getId')->andReturn('mock');
         $protocolMock->shouldReceive('sendMessage')->andReturnUsing(function (...$args) use (&$messages) {
             $messages[] = $args[0];
         });

@@ -104,7 +104,7 @@ interface RTCIceConnectionInterface
 
     public function respondError(MessageInterface $orgMessage, InternetAddress $address, IceConnectionProtocolInterface $protocol, array $errorCode): void;
 
-    public function onClose(): void;
+    public function onClose(?IceConnectionProtocolInterface $protocol = null): void;
 
     public function onError(Throwable $e): void;
 

@@ -54,6 +54,21 @@ final class RTCIceCandidatePair
      */
     private RTCIceCandidatePairStats $state = RTCIceCandidatePairStats::FROZEN;
 
+    /** Smoothed round-trip time of the binding requests sent on this pair, in seconds. */
+    private ?float $rtt = null;
+
+    /** How many round-trip times were measured. */
+    private int $rttSamples = 0;
+
+    /** When a binding request sent on this pair was last answered (microtime). */
+    private ?float $lastResponseAt = null;
+
+    /** When a keepalive binding request was last sent on this pair (microtime). */
+    private ?float $lastPingAt = null;
+
+    /** Whether a keepalive binding request is waiting for its response. */
+    private bool $pinging = false;
+
     /**
      * Creates a new RTCIceCandidatePair instance
      *
@@ -225,5 +240,98 @@ final class RTCIceCandidatePair
     public function setState(RTCIceCandidatePairStats $state): void
     {
         $this->state = $state;
+    }
+
+    /**
+     * Records the response to a binding request sent on this pair.
+     *
+     * @param float $rtt How long the response took, in seconds.
+     */
+    public function recordResponse(float $rtt, float $now): void
+    {
+        // Smoothed like TCP's (RFC 6298), but reacting faster to a path getting slower.
+        $this->rtt = $this->rtt === null ? $rtt : 0.75 * $this->rtt + 0.25 * $rtt;
+        $this->rttSamples++;
+        $this->lastResponseAt = $now;
+    }
+
+    /**
+     * Considers this pair answered now, if it never was: for a pair that became valid without a timed request.
+     */
+    public function touch(float $now): void
+    {
+        $this->lastResponseAt ??= $now;
+    }
+
+    /**
+     * Gets the smoothed round-trip time of this pair, in seconds, if measured.
+     */
+    public function getRtt(): ?float
+    {
+        return $this->rtt;
+    }
+
+    /**
+     * Gets how many round-trip times were measured on this pair.
+     */
+    public function getRttSamples(): int
+    {
+        return $this->rttSamples;
+    }
+
+    /**
+     * Gets when a binding request sent on this pair was last answered (microtime), if ever.
+     */
+    public function getLastResponseAt(): ?float
+    {
+        return $this->lastResponseAt;
+    }
+
+    /**
+     * Whether a binding request sent on this pair was answered in the specified number of seconds.
+     */
+    public function respondedWithin(float $seconds, float $now): bool
+    {
+        return $this->lastResponseAt !== null && $now - $this->lastResponseAt <= $seconds;
+    }
+
+    /**
+     * Gets when a keepalive binding request was last sent on this pair (microtime), if ever.
+     */
+    public function getLastPingAt(): ?float
+    {
+        return $this->lastPingAt;
+    }
+
+    /**
+     * Whether a keepalive binding request is waiting for its response.
+     */
+    public function isPinging(): bool
+    {
+        return $this->pinging;
+    }
+
+    /**
+     * Records that a keepalive binding request was sent, or that it got answered or timed out.
+     */
+    public function setPinging(bool $pinging, float $now): void
+    {
+        $this->pinging = $pinging;
+        if ($pinging) {
+            $this->lastPingAt = $now;
+        }
+    }
+
+    /**
+     * Restarts the liveness bookkeeping, as after the agent was serialized and restored: the timestamps
+     * of another process mean nothing, and the requests it was waiting for won't be answered to it.
+     */
+    public function resetLiveness(float $now): void
+    {
+        if ($this->lastResponseAt !== null) {
+            $this->lastResponseAt = $now;
+        }
+        $this->lastPingAt = null;
+        $this->pinging = false;
     }
 }
