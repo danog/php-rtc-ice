@@ -96,11 +96,11 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
      */
     private const BACKUP_RETRANSMISSIONS = 1;
     /**
-     * Retransmissions of a connectivity check (RFC 8445 14.3). A check to a relayed candidate is dropped by the TURN
-     * server until the peer's allocation permits the sender, which happens when the peer checks the pair from its side:
-     * sent only once, it could fail before.
+     * Retransmissions of a connectivity check to a relayed candidate (RFC 8445 14.3). It's dropped by the TURN server
+     * until the peer's allocation permits the sender, which happens when the peer checks the pair from its side: sent
+     * only once, it could fail before. The other checks are sent once, so that the unreachable pairs fail quickly.
      */
-    private const CHECK_RETRANSMISSIONS = 2;
+    private const RELAYED_CHECK_RETRANSMISSIONS = 2;
 
     /** How long the selected pair can go without answering before switching to a backup, in seconds. */
     private const UNWRITABLE_TIMEOUT = 3.0;
@@ -1331,13 +1331,14 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $remoteAddress = $pair->getRemoteAddress();
 
         $password = $this->remotePassword;
+        $retransmissions = self::getCheckRetransmissions($pair);
         // The request blocks, so it runs in its own fiber: the caller drives the check list
         // and must not stall on one pair's transaction. It only holds the connection weakly, so that
         // a pending request doesn't keep an abandoned connection alive.
         $weak = \WeakReference::create($this);
-        async(static function () use ($weak, $pair, $message, $remoteAddress, $password): void {
+        async(static function () use ($weak, $pair, $message, $remoteAddress, $password, $retransmissions): void {
             try {
-                $pair->getProtocol()->request($message, $remoteAddress, $password, self::CHECK_RETRANSMISSIONS);
+                $pair->getProtocol()->request($message, $remoteAddress, $password, $retransmissions);
                 $pair->setNominated(true);
                 $weak->get()?->markPairSucceeded($pair);
             } catch (Throwable) {
@@ -1375,6 +1376,14 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
     }
 
     /**
+     * Gets how many times a connectivity check of a pair is retransmitted.
+     */
+    private static function getCheckRetransmissions(RTCIceCandidatePair $pair): int
+    {
+        return $pair->getRemoteCandidate()->getType() === CandidateType::relay ? self::RELAYED_CHECK_RETRANSMISSIONS : 0;
+    }
+
+    /**
      * Initiates a connectivity check by sending a STUN binding request.
      *
      * Changes the candidate pair state to "in_progress" and sends a STUN binding
@@ -1392,15 +1401,16 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $remoteAddress = $pair->getRemoteAddress();
 
         $password = $this->remotePassword;
+        $retransmissions = self::getCheckRetransmissions($pair);
         // The request blocks, so it runs in its own fiber: several pairs are checked
         // concurrently and the check list has to keep moving while each is outstanding. It only
         // holds the connection weakly, so that a pending request doesn't keep an abandoned
         // connection alive (once established, the peer's checks keep triggering new ones).
         $weak = \WeakReference::create($this);
-        async(static function () use ($weak, $pair, $message, $remoteAddress, $nominate, $password): void {
+        async(static function () use ($weak, $pair, $message, $remoteAddress, $nominate, $password, $retransmissions): void {
             try {
                 $start = microtime(true);
-                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $password, self::CHECK_RETRANSMISSIONS);
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $password, $retransmissions);
                 $self = $weak->get();
                 if ($self === null) {
                     return;
