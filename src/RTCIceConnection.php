@@ -95,6 +95,12 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
      * Kept short, as a request holds its socket, and so the connection, until it ends.
      */
     private const BACKUP_RETRANSMISSIONS = 1;
+    /**
+     * Retransmissions of a connectivity check (RFC 8445 14.3). A check to a relayed candidate is dropped by the TURN
+     * server until the peer's allocation permits the sender, which happens when the peer checks the pair from its side:
+     * sent only once, it could fail before.
+     */
+    private const CHECK_RETRANSMISSIONS = 2;
 
     /** How long the selected pair can go without answering before switching to a backup, in seconds. */
     private const UNWRITABLE_TIMEOUT = 3.0;
@@ -1331,7 +1337,7 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         $weak = \WeakReference::create($this);
         async(static function () use ($weak, $pair, $message, $remoteAddress, $password): void {
             try {
-                $pair->getProtocol()->request($message, $remoteAddress, $password);
+                $pair->getProtocol()->request($message, $remoteAddress, $password, self::CHECK_RETRANSMISSIONS);
                 $pair->setNominated(true);
                 $weak->get()?->markPairSucceeded($pair);
             } catch (Throwable) {
@@ -1394,7 +1400,7 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
         async(static function () use ($weak, $pair, $message, $remoteAddress, $nominate, $password): void {
             try {
                 $start = microtime(true);
-                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $password);
+                [, $address] = $pair->getProtocol()->request($message, $remoteAddress, $password, self::CHECK_RETRANSMISSIONS);
                 $self = $weak->get();
                 if ($self === null) {
                     return;

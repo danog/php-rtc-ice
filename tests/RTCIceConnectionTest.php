@@ -1005,6 +1005,8 @@ class RTCIceConnectionTest extends TestCase
     {
         $connection1 = $this->getIceConnection();
         $connection2 = $this->getIceConnection(false);
+        self::twoLoopbackPathsOnWindows($connection1);
+        self::twoLoopbackPathsOnWindows($connection2);
         $connection1->setTimeScale(0.1);
         $connection2->setTimeScale(0.1);
         $this->inviteAccept($connection1, $connection2);
@@ -1072,6 +1074,8 @@ class RTCIceConnectionTest extends TestCase
     {
         $connection1 = $this->getIceConnection();
         $connection2 = $this->getIceConnection(false);
+        self::twoLoopbackPathsOnWindows($connection1);
+        self::twoLoopbackPathsOnWindows($connection2);
         $connection1->setTimeScale(0.1);
         $connection2->setTimeScale(0.1);
 
@@ -1757,6 +1761,17 @@ class RTCIceConnectionTest extends TestCase
     {
         if (PHP_OS_FAMILY === 'Windows') {
             $connection->setNat1to1(['127.0.0.1']);
+        }
+    }
+
+    /**
+     * Gives the agent two network paths on Windows too, where its host candidates are pinned to the loopback: one over
+     * IPv4, one over IPv6.
+     */
+    private static function twoLoopbackPathsOnWindows(RTCIceConnection $connection): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $connection->setNat1to1(['127.0.0.1', '[::1]']);
         }
     }
 
