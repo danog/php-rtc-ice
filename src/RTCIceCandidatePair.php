@@ -76,6 +76,11 @@ final class RTCIceCandidatePair
      *                                                (contains the local candidate)
      * @param RTCIceCandidate $remoteCandidate The remote ICE candidate
      */
+    /** The address of the remote candidate, and the host and port it was created from. */
+    private ?InternetAddress $remoteAddress = null;
+    private ?string $remoteHost = null;
+    private ?int $remotePort = null;
+
     public function __construct(private readonly IceConnectionProtocolInterface $protocol, private readonly RTCIceCandidate $remoteCandidate)
     {
     }
@@ -128,9 +133,16 @@ final class RTCIceCandidatePair
      */
     public function getRemoteAddress(): InternetAddress
     {
+        $host = $this->remoteCandidate->getHost();
         /** @var int<0, 65535> $port */
         $port = $this->remoteCandidate->getPort();
-        return new InternetAddress($this->remoteCandidate->getHost(), $port);
+        // Used for every packet sent: reuse the address, as long as the candidate doesn't change.
+        if ($this->remoteAddress === null || $this->remoteHost !== $host || $this->remotePort !== $port) {
+            $this->remoteAddress = new InternetAddress($host, $port);
+            $this->remoteHost = $host;
+            $this->remotePort = $port;
+        }
+        return $this->remoteAddress;
     }
 
     /**
