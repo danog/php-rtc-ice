@@ -23,6 +23,7 @@ final class RTCIceParameters
      */
     public function __construct(
         public ?string $usernameFragment = null,
+        #[\SensitiveParameter]
         public ?string $password = null,
         public bool    $iceLite = false
     )

@@ -367,7 +367,7 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
      * @return void
      */
     #[Override]
-    public function setLocalPassword(string $localPassword): void
+    public function setLocalPassword(#[\SensitiveParameter] string $localPassword): void
     {
         $this->localPassword = $localPassword;
     }
@@ -443,7 +443,7 @@ class RTCIceConnection implements RTCIceConnectionInterface, ReceiverInterface
      * @return void
      */
     #[Override]
-    public function setRemotePassword(?string $remotePassword): void
+    public function setRemotePassword(#[\SensitiveParameter] ?string $remotePassword): void
     {
         $this->remotePassword = $remotePassword;
     }
