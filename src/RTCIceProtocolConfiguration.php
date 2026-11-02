@@ -159,7 +159,7 @@ final class RTCIceProtocolConfiguration implements RTCIceProtocolConfigurationIn
      */
     #[\Override]
 
-    public function setTurnPassword(?string $turnPassword): void
+    public function setTurnPassword(#[\SensitiveParameter] ?string $turnPassword): void
     {
         $this->turnPassword = $turnPassword;
     }

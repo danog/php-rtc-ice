@@ -34,7 +34,7 @@ interface RTCIceConnectionInterface
 
     public function getLocalPassword(): string;
 
-    public function setLocalPassword(string $localPassword): void;
+    public function setLocalPassword(#[\SensitiveParameter] string $localPassword): void;
 
     /**
      * @return RTCIceCandidate[]
@@ -62,7 +62,7 @@ interface RTCIceConnectionInterface
 
     public function getRemotePassword(): ?string;
 
-    public function setRemotePassword(?string $remotePassword): void;
+    public function setRemotePassword(#[\SensitiveParameter] ?string $remotePassword): void;
 
     /**
      * @return array<int>
